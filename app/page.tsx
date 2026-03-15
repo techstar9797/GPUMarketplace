@@ -1,111 +1,202 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import {
   Zap, Search, ExternalLink, Activity, DollarSign,
   Server, Sparkles, BarChart3, Shield, TrendingDown,
-  Cpu, Thermometer, Network, Database, AlertTriangle,
-  ChevronRight, Info, Wind, Power, Clock, Layers
+  Cpu, Network, Database, AlertTriangle,
+  ChevronRight, Power, Clock, Layers, Leaf,
+  ArrowUpDown, Filter, Info
 } from "lucide-react";
 import { GlowingEffect } from "@/components/ui/glowing-effect";
 import { cn } from "@/lib/utils";
+import { KernelFeed } from "@/components/kernel-feed";
 
-// ─── REAL GPU HARDWARE SPECS ─────────────────────────────────────────────────
-const GPU_SPECS = [
-  {
-    id: "h100-sxm5",    name: "H100 SXM5",    arch: "Hopper",    vram: 80,
-    hbm: "HBM3",        hbm_bw: 3350,  // GB/s
-    tflops_fp16: 1979,  tflops_fp8: 3958,  tflops_fp32: 67,
-    nvlink_bw: 900,     pcie_bw: 128,  nvlink_gen: 4,
-    tdp: 700,           mig_instances: 7,
-    ops_per_byte: Math.round(1979*1e12 / (3350*1e9)),  // ~591
-    providers: ["CoreWeave","Lambda Labs","Nebius","AWS","Google Cloud","Azure"],
-    od_range: [2.95, 14.63], spot_range: [3.69, 4.39],
-  },
-  {
-    id: "h100-pcie",    name: "H100 PCIe",    arch: "Hopper",    vram: 80,
-    hbm: "HBM3",        hbm_bw: 2000,
-    tflops_fp16: 756,   tflops_fp8: 1513,  tflops_fp32: 51,
-    nvlink_bw: 600,     pcie_bw: 128,  nvlink_gen: 4,
-    tdp: 350,           mig_instances: 7,
-    ops_per_byte: Math.round(756*1e12 / (2000*1e9)),
-    providers: ["Lambda Labs","AWS"],
-    od_range: [2.49, 5.70], spot_range: [1.71, 2.50],
-  },
-  {
-    id: "a100-80",      name: "A100 80GB",    arch: "Ampere",    vram: 80,
-    hbm: "HBM2e",       hbm_bw: 2039,
-    tflops_fp16: 312,   tflops_fp8: null,   tflops_fp32: 19.5,
-    nvlink_bw: 600,     pcie_bw: 64,   nvlink_gen: 3,
-    tdp: 400,           mig_instances: 7,
-    ops_per_byte: Math.round(312*1e12 / (2039*1e9)),
-    providers: ["CoreWeave","Lambda Labs","Nebius","AWS","Google Cloud","Azure"],
-    od_range: [1.85, 5.70], spot_range: [1.23, 1.71],
-  },
-  {
-    id: "l40s",         name: "L40S",         arch: "Ada Lovelace", vram: 48,
-    hbm: "GDDR6",       hbm_bw: 864,
-    tflops_fp16: 362,   tflops_fp8: 733,   tflops_fp32: 91.6,
-    nvlink_bw: null,    pcie_bw: 64,   nvlink_gen: null,
-    tdp: 350,           mig_instances: null,
-    ops_per_byte: Math.round(362*1e12 / (864*1e9)),
-    providers: ["AWS","Azure"],
-    od_range: [2.22, 3.40], spot_range: [0.67, 1.02],
-  },
-  {
-    id: "l4",           name: "L4",           arch: "Ada Lovelace", vram: 24,
-    hbm: "GDDR6",       hbm_bw: 300,
-    tflops_fp16: 242,   tflops_fp8: 484,   tflops_fp32: 30.3,
-    nvlink_bw: null,    pcie_bw: 64,   nvlink_gen: null,
-    tdp: 72,            mig_instances: null,
-    ops_per_byte: Math.round(242*1e12 / (300*1e9)),
-    providers: ["AWS","Google Cloud"],
-    od_range: [0.70, 0.80], spot_range: [0.21, 0.24],
-  },
-];
+// ─── GPU HARDWARE SPECS ───────────────────────────────────────────────────────
+const GPU_SPECS: Record<string, {
+  name: string; arch: string; vram: number; hbm: string;
+  hbm_bw: number; tflops_fp16: number; tflops_fp8: number | null;
+  nvlink_bw: number | null; tdp: number; ops_per_byte: number;
+}> = {
+  "h100-sxm": { name:"H100 SXM5",  arch:"Hopper",       vram:80,  hbm:"HBM3",   hbm_bw:3350, tflops_fp16:1979, tflops_fp8:3958, nvlink_bw:900, tdp:700, ops_per_byte:591 },
+  "h100-pcie":{ name:"H100 PCIe",  arch:"Hopper",       vram:80,  hbm:"HBM3",   hbm_bw:2000, tflops_fp16:756,  tflops_fp8:1513, nvlink_bw:600, tdp:350, ops_per_byte:378 },
+  "h200":     { name:"H200",       arch:"Hopper+",      vram:141, hbm:"HBM3e",  hbm_bw:4800, tflops_fp16:1979, tflops_fp8:3958, nvlink_bw:900, tdp:700, ops_per_byte:412 },
+  "a100-80":  { name:"A100 80GB",  arch:"Ampere",       vram:80,  hbm:"HBM2e",  hbm_bw:2039, tflops_fp16:312,  tflops_fp8:null, nvlink_bw:600, tdp:400, ops_per_byte:153 },
+  "a100-40":  { name:"A100 40GB",  arch:"Ampere",       vram:40,  hbm:"HBM2e",  hbm_bw:1555, tflops_fp16:312,  tflops_fp8:null, nvlink_bw:600, tdp:400, ops_per_byte:201 },
+  "l40s":     { name:"L40S 48GB",  arch:"Ada Lovelace", vram:48,  hbm:"GDDR6",  hbm_bw:864,  tflops_fp16:362,  tflops_fp8:733,  nvlink_bw:null,tdp:350, ops_per_byte:419 },
+  "rtx4090":  { name:"RTX 4090",   arch:"Ada Lovelace", vram:24,  hbm:"GDDR6X", hbm_bw:1008, tflops_fp16:82.6, tflops_fp8:null, nvlink_bw:null,tdp:450, ops_per_byte:82  },
+  "a6000":    { name:"A6000 Ada",  arch:"Ada Lovelace", vram:48,  hbm:"GDDR6",  hbm_bw:864,  tflops_fp16:154,  tflops_fp8:null, nvlink_bw:null,tdp:300, ops_per_byte:178 },
+};
 
-// ─── PROVIDER PRICING TABLE ───────────────────────────────────────────────────
+// ─── NEOCLOUD + HYPERSCALER PROVIDER DATA ─────────────────────────────────────
+// All pricing sourced from: IntuitionLabs H100 Rental Report Mar 2026, Saturn Cloud
+// Neocloud Comparison Dec 2025, Northflank GPU comparison Aug 2025, provider pricing pages
 const PROVIDERS = [
-  { name:"CoreWeave",    color:"#6366f1", logo:"CW",  gpus:["h100-sxm5","a100-80"],    pricing:{"h100-sxm5":{od:4.25,spot:null},"a100-80":{od:2.06,spot:null}} },
-  { name:"Lambda Labs",  color:"#ec4899", logo:"LL",  gpus:["h100-sxm5","h100-pcie","a100-80"], pricing:{"h100-sxm5":{od:3.29,spot:null},"h100-pcie":{od:2.49,spot:null},"a100-80":{od:1.99,spot:null}} },
-  { name:"Nebius",       color:"#10b981", logo:"NB",  gpus:["h100-sxm5","a100-80"],    pricing:{"h100-sxm5":{od:2.95,spot:null},"a100-80":{od:1.85,spot:null}} },
-  { name:"AWS",          color:"#f59e0b", logo:"AWS", gpus:["h100-sxm5","a100-80","l40s","l4"], pricing:{"h100-sxm5":{od:12.29,spot:3.69},"a100-80":{od:4.10,spot:1.23},"l40s":{od:2.22,spot:0.67},"l4":{od:0.80,spot:0.24}} },
-  { name:"Google Cloud", color:"#3b82f6", logo:"GCP", gpus:["h100-sxm5","a100-80","l4"], pricing:{"h100-sxm5":{od:14.63,spot:4.39},"a100-80":{od:5.70,spot:1.71},"l4":{od:0.70,spot:0.21}} },
-  { name:"Azure",        color:"#8b5cf6", logo:"AZ",  gpus:["h100-sxm5","a100-80","l40s"], pricing:{"h100-sxm5":{od:13.40,spot:4.02},"a100-80":{od:4.10,spot:1.23},"l40s":{od:3.40,spot:1.02}} },
+  // ── NEOCLOUDS ──
+  {
+    id:"coreweave", name:"CoreWeave",    logo:"CW", color:"#6366f1", tier:"neocloud",
+    hq:"US", ib:true, egress_free:true, sla:true, green:false,
+    focus:"HPC/Enterprise, largest H100 inventory, Kubernetes-native, InfiniBand",
+    gpus:[
+      { gpu:"h100-sxm",  od:6.16, spot:null,  note:"8×HGX node ÷8; IB interconnect" },
+      { gpu:"h100-pcie", od:4.76, spot:null,  note:"PCIe variant" },
+      { gpu:"a100-80",   od:2.21, spot:null,  note:"NVLink" },
+      { gpu:"a100-40",   od:2.06, spot:null,  note:"PCIe" },
+    ],
+  },
+  {
+    id:"lambda", name:"Lambda Labs",   logo:"LL", color:"#ec4899", tier:"neocloud",
+    hq:"US", ib:true, egress_free:true, sla:true, green:false,
+    focus:"AI Dev Cloud, one-click clusters, NVIDIA investor, academic discount",
+    gpus:[
+      { gpu:"h100-sxm",  od:2.99, spot:null,  note:"SXM NVL3 node" },
+      { gpu:"h100-pcie", od:2.49, spot:null,  note:"" },
+      { gpu:"a100-80",   od:1.99, spot:null,  note:"" },
+      { gpu:"a100-40",   od:1.29, spot:null,  note:"" },
+      { gpu:"a6000",     od:0.80, spot:null,  note:"" },
+    ],
+  },
+  {
+    id:"together", name:"Together AI",   logo:"TAI",color:"#f97316", tier:"neocloud",
+    hq:"US", ib:true, egress_free:true, sla:true, green:false,
+    focus:"Tri Dao kernels (FlashAttention), GB200/B200 clusters, serverless inference + raw GPU",
+    gpus:[
+      { gpu:"h100-sxm",  od:2.39, spot:1.76,  note:"on-demand; $1.76 reserved" },
+      { gpu:"h200",      od:3.50, spot:2.80,  note:"" },
+      { gpu:"a100-80",   od:1.65, spot:null,  note:"" },
+    ],
+  },
+  {
+    id:"crusoe", name:"Crusoe Energy",  logo:"CR", color:"#22c55e", tier:"neocloud",
+    hq:"US", ib:true, egress_free:false, sla:true, green:true,
+    focus:"100% renewable / stranded energy, H100/H200/B200, sustainable AI compute",
+    gpus:[
+      { gpu:"h100-sxm",  od:2.45, spot:1.65,  note:"renewable power" },
+      { gpu:"h200",      od:3.20, spot:2.10,  note:"" },
+      { gpu:"a100-80",   od:1.65, spot:null,  note:"" },
+    ],
+  },
+  {
+    id:"fluidstack", name:"FluidStack",   logo:"FS", color:"#06b6d4", tier:"neocloud",
+    hq:"UK/US", ib:true, egress_free:true, sla:true, green:true,
+    focus:"Wholesale + marketplace, 62% enterprise contracts, SkyPilot-integrated, global DC footprint",
+    gpus:[
+      { gpu:"h100-sxm",  od:2.25, spot:1.35,  note:"direct + marketplace" },
+      { gpu:"h100-pcie", od:1.99, spot:1.20,  note:"" },
+      { gpu:"a100-80",   od:1.49, spot:0.90,  note:"" },
+      { gpu:"a100-40",   od:1.29, spot:0.75,  note:"" },
+    ],
+  },
+  {
+    id:"vastai", name:"Vast.ai",       logo:"VA", color:"#a78bfa", tier:"marketplace",
+    hq:"US", ib:false, egress_free:false, sla:false, green:false,
+    focus:"Peer-to-peer GPU marketplace, lowest prices, variable reliability, no SLA",
+    gpus:[
+      { gpu:"h100-sxm",  od:1.87, spot:1.49,  note:"marketplace low; varies" },
+      { gpu:"h100-pcie", od:1.55, spot:1.10,  note:"" },
+      { gpu:"a100-80",   od:0.79, spot:0.67,  note:"" },
+      { gpu:"a100-40",   od:0.52, spot:null,  note:"" },
+      { gpu:"rtx4090",   od:0.35, spot:0.22,  note:"" },
+    ],
+  },
+  {
+    id:"runpod", name:"RunPod",        logo:"RP", color:"#f43f5e", tier:"neocloud",
+    hq:"US", ib:false, egress_free:true, sla:false, green:false,
+    focus:"AI-first, per-second billing, serverless, 30+ regions, 200ms cold start",
+    gpus:[
+      { gpu:"h100-sxm",  od:2.39, spot:1.99,  note:"secure cloud" },
+      { gpu:"h100-pcie", od:1.99, spot:1.69,  note:"community cloud" },
+      { gpu:"a100-80",   od:1.19, spot:0.79,  note:"community cloud" },
+      { gpu:"a100-40",   od:0.60, spot:null,  note:"" },
+      { gpu:"rtx4090",   od:0.34, spot:0.27,  note:"" },
+    ],
+  },
+  {
+    id:"paperspace", name:"Paperspace",    logo:"PS", color:"#eab308", tier:"neocloud",
+    hq:"US (DigitalOcean)", ib:false, egress_free:true, sla:true, green:false,
+    focus:"DigitalOcean subsidiary, Gradient notebooks, developer UX, NY/CA/AMS regions",
+    gpus:[
+      { gpu:"h100-sxm",  od:5.95, spot:null,  note:"dedicated VM" },
+      { gpu:"a100-80",   od:3.09, spot:1.15,  note:"$1.15 on 36mo commitment" },
+      { gpu:"a100-40",   od:2.30, spot:null,  note:"" },
+    ],
+  },
+  // ── HYPERSCALERS ──
+  {
+    id:"aws", name:"AWS",            logo:"AWS",color:"#f59e0b", tier:"hyperscaler",
+    hq:"US (global)", ib:false, egress_free:false, sla:true, green:false,
+    focus:"p5 instances, spot capacity blocks, SageMaker, enterprise SLA, global regions",
+    gpus:[
+      { gpu:"h100-sxm",  od:3.90, spot:2.50,  note:"p5 per-GPU; 44% cut Jun 2025" },
+      { gpu:"a100-80",   od:4.10, spot:1.23,  note:"p4d per-GPU" },
+      { gpu:"l40s",      od:2.22, spot:0.67,  note:"g6e" },
+    ],
+  },
+  {
+    id:"gcp", name:"Google Cloud",  logo:"GCP",color:"#3b82f6", tier:"hyperscaler",
+    hq:"US (global)", ib:false, egress_free:false, sla:true, green:true,
+    focus:"A3 instances, TPU v4/v5, carbon-neutral, committed use discounts",
+    gpus:[
+      { gpu:"h100-sxm",  od:3.00, spot:1.71,  note:"a3-highgpu per-GPU; price cut 2025" },
+      { gpu:"a100-80",   od:5.70, spot:1.71,  note:"a2-ultra" },
+    ],
+  },
+  {
+    id:"azure", name:"Azure",          logo:"AZ", color:"#8b5cf6", tier:"hyperscaler",
+    hq:"US (global)", ib:false, egress_free:false, sla:true, green:false,
+    focus:"NC H100 v5, enterprise integration, Azure OpenAI, NDv5 series",
+    gpus:[
+      { gpu:"h100-sxm",  od:6.98, spot:4.02,  note:"NC80adis H100 v5 East US" },
+      { gpu:"a100-80",   od:4.10, spot:1.23,  note:"NDasrA100 v4" },
+      { gpu:"l40s",      od:3.40, spot:1.02,  note:"NC80adis A10 v4" },
+    ],
+  },
+  {
+    id:"nebius", name:"Nebius",         logo:"NB", color:"#10b981", tier:"neocloud",
+    hq:"EU (Amsterdam)", ib:true, egress_free:true, sla:true, green:true,
+    focus:"Ex-Yandex Cloud, EU data sovereignty, cheapest H100 in EU, renewable energy",
+    gpus:[
+      { gpu:"h100-sxm",  od:2.95, spot:null,  note:"EU cheapest H100" },
+      { gpu:"h200",      od:3.20, spot:null,  note:"NVL 94GB" },
+      { gpu:"a100-80",   od:1.85, spot:null,  note:"" },
+    ],
+  },
 ];
 
-// ─── LLM MODELS ──────────────────────────────────────────────────────────────
-const LLM_MODELS = [
-  { name:"Llama 3.1 8B",   params:8,   layers:32, hidden:4096, heads:32, kv_heads:8,  precision:"fp16", bytes_per_param:2 },
-  { name:"Llama 3.1 70B",  params:70,  layers:80, hidden:8192, heads:64, kv_heads:8,  precision:"fp16", bytes_per_param:2 },
-  { name:"Llama 3.1 405B", params:405, layers:126,hidden:16384,heads:128,kv_heads:16, precision:"fp16", bytes_per_param:2 },
-  { name:"Mistral 7B",     params:7,   layers:32, hidden:4096, heads:32, kv_heads:8,  precision:"fp16", bytes_per_param:2 },
-  { name:"DeepSeek-R1 67B",params:67,  layers:80, hidden:8192, heads:64, kv_heads:8,  precision:"fp16", bytes_per_param:2 },
-  { name:"GPT-3 175B",     params:175, layers:96, hidden:12288,heads:96, kv_heads:96, precision:"fp16", bytes_per_param:2 },
-  { name:"Mixtral 8×7B",   params:46.7,layers:32, hidden:4096, heads:32, kv_heads:8,  precision:"fp16", bytes_per_param:2 },
-];
+// ─── PROVIDER TIER LABELS ─────────────────────────────────────────────────────
+const TIER_STYLE: Record<string,{label:string;color:string;bg:string;border:string}> = {
+  neocloud:    { label:"Neocloud",    color:"text-cyan-400",   bg:"bg-cyan-400/10",    border:"border-cyan-400/20"    },
+  marketplace: { label:"Marketplace", color:"text-violet-400", bg:"bg-violet-400/10", border:"border-violet-400/20"   },
+  hyperscaler: { label:"Hyperscaler", color:"text-amber-400",  bg:"bg-amber-400/10",  border:"border-amber-400/20"    },
+};
 
-// ─── GPU MODE KERNELS (from HuggingFace gpu-mode/kernelbot-data) ─────────────
+// ─── GPU KERNELS ──────────────────────────────────────────────────────────────
 const KERNELS = [
-  { rank:1, name:"FlashAttention-3",      op:"Attention",     speedup:4.2, tag:"triton", workload:"inference+training" },
-  { rank:2, name:"cuda.compute Sort",     op:"Radix Sort",    speedup:3.8, tag:"python", workload:"preprocessing"      },
-  { rank:3, name:"FP8 GEMM (MI300)",     op:"MatMul",        speedup:3.1, tag:"cuda",   workload:"training"           },
-  { rank:4, name:"Fused LayerNorm+ReLU", op:"Normalization", speedup:2.9, tag:"triton", workload:"inference+training" },
-  { rank:5, name:"Fused AdamW BF16",     op:"Optimizer",     speedup:1.9, tag:"triton", workload:"training"           },
+  { rank:1, name:"FlashAttention-3",      op:"Attention",     speedup:4.2, tag:"triton", author:"Tri Dao / Together" },
+  { rank:2, name:"cuda.compute Sort",     op:"Radix Sort",    speedup:3.8, tag:"python", author:"NVIDIA CCCL"       },
+  { rank:3, name:"FP8 GEMM (MI300)",     op:"MatMul",        speedup:3.1, tag:"cuda",   author:"AMD kernelbot"     },
+  { rank:4, name:"Fused LayerNorm+ReLU", op:"Normalization", speedup:2.9, tag:"triton", author:"GPU MODE community" },
+  { rank:5, name:"Fused AdamW BF16",     op:"Optimizer",     speedup:1.9, tag:"triton", author:"GPU MODE community" },
 ];
 
-// ─── 7-LAYER INFERENCE MODEL ─────────────────────────────────────────────────
-const INFERENCE_LAYERS = [
-  { id:1, name:"Model Loading",     phase:"setup",    bound:"I/O",     desc:"PCIe transfer of weights from CPU RAM to GPU HBM. ~25-28 GB/s sustained on PCIe 4.0 x16.",   metric:"PCIe BW",     icon:"🔌" },
-  { id:2, name:"Tokenization",      phase:"setup",    bound:"CPU",     desc:"CPU-bound. Fast tokenizers use FSA at O(n). Bottleneck under high concurrency.",              metric:"CPU throughput",icon:"📝" },
-  { id:3, name:"Prefill (Compute)", phase:"prefill",  bound:"Compute", desc:"Parallel processing of all prompt tokens. Matrix-matrix multiply = compute-bound. Saturates Tensor Cores.",    metric:"TFLOPS",      icon:"⚡" },
-  { id:4, name:"KV Cache Alloc",    phase:"prefill",  bound:"Memory",  desc:"PagedAttention allocates KV blocks in HBM. Grows linearly with seq_len × layers × 2 × hidden.",metric:"VRAM GB",      icon:"💾" },
-  { id:5, name:"Decode (Attention)",phase:"decode",   bound:"Memory BW",desc:"Matrix-vector ops. Each new token loads ALL weights and KV cache from HBM. Memory-bandwidth bound.",metric:"HBM BW GB/s",  icon:"🔄" },
-  { id:6, name:"Multi-GPU Comm",    phase:"parallel", bound:"Network", desc:"All-Reduce via NVLink (intra-node 900 GB/s) or InfiniBand (inter-node 400 Gb/s). TP>4 becomes comm-bound.",   metric:"NVLink/IB BW", icon:"🌐" },
-  { id:7, name:"Output Sampling",   phase:"decode",   bound:"CPU/GPU", desc:"Softmax + top-p/top-k sampling. Small compute cost but critical path for TTFT.",              metric:"Latency ms",   icon:"🎯" },
+const TAG_STYLE: Record<string,string> = {
+  triton:"text-purple-400 bg-purple-400/10 border-purple-400/20",
+  python:"text-green-400 bg-green-400/10 border-green-400/20",
+  cuda:  "text-amber-400 bg-amber-400/10 border-amber-400/20",
+};
+
+// ─── 7-LAYER INFERENCE MODEL ──────────────────────────────────────────────────
+const INF_LAYERS = [
+  { id:1, name:"Model Load",      phase:"setup",   bound:"I/O",       icon:"🔌", metric:"PCIe BW",      desc:"Weights from CPU RAM → GPU HBM via PCIe. ~25 GB/s sustained on PCIe4 x16." },
+  { id:2, name:"Tokenize",        phase:"setup",   bound:"CPU",       icon:"📝", metric:"CPU tput",     desc:"CPU-bound FSA tokenization. Bottleneck under high concurrency." },
+  { id:3, name:"Prefill",         phase:"prefill", bound:"Compute",   icon:"⚡", metric:"TFLOPS",       desc:"Matrix-matrix multiply on all prompt tokens. Saturates Tensor Cores." },
+  { id:4, name:"KV Alloc",        phase:"prefill", bound:"Memory",    icon:"💾", metric:"VRAM GB",      desc:"PagedAttention KV blocks. Grows as 2 × layers × kv_heads × head_dim × seq_len." },
+  { id:5, name:"Decode Attn",     phase:"decode",  bound:"Memory BW", icon:"🔄", metric:"HBM BW GB/s",  desc:"Matrix-vector ops per token. Loads ALL weights + KV each step. BW-limited." },
+  { id:6, name:"Multi-GPU Comm",  phase:"dist",    bound:"Network",   icon:"🌐", metric:"NVLink/IB BW", desc:"All-Reduce via NVLink 900 GB/s intra-node or IB 400Gb/s inter-node." },
+  { id:7, name:"Sampling",        phase:"decode",  bound:"CPU/GPU",   icon:"🎯", metric:"Latency ms",   desc:"Softmax + top-p/k. Critical path for TTFT but small compute cost." },
 ];
 
-const BOUND_COLOR: Record<string,string> = {
+const BOUND_COLORS: Record<string,string> = {
   "I/O":      "text-amber-400 bg-amber-400/10 border-amber-400/20",
   "CPU":      "text-orange-400 bg-orange-400/10 border-orange-400/20",
   "Compute":  "text-red-400 bg-red-400/10 border-red-400/20",
@@ -115,103 +206,34 @@ const BOUND_COLOR: Record<string,string> = {
   "CPU/GPU":  "text-green-400 bg-green-400/10 border-green-400/20",
 };
 
-// ─── CALCULATIONS ─────────────────────────────────────────────────────────────
-function calcModelMemory(model: typeof LLM_MODELS[0]) {
-  // Weights in GB
-  const weights_gb = model.params * 1e9 * model.bytes_per_param / 1e9;
-  return weights_gb;
-}
+// ─── LLM MODELS ───────────────────────────────────────────────────────────────
+const LLM_MODELS = [
+  { name:"Llama 3.1 8B",    params:8,    layers:32,  hidden:4096,  kv_heads:8,  heads:32,  bytes:2 },
+  { name:"Llama 3.1 70B",   params:70,   layers:80,  hidden:8192,  kv_heads:8,  heads:64,  bytes:2 },
+  { name:"Llama 3.1 405B",  params:405,  layers:126, hidden:16384, kv_heads:16, heads:128, bytes:2 },
+  { name:"DeepSeek-R1 67B", params:67,   layers:80,  hidden:8192,  kv_heads:8,  heads:64,  bytes:2 },
+  { name:"Mixtral 8×7B",    params:46.7, layers:32,  hidden:4096,  kv_heads:8,  heads:32,  bytes:2 },
+  { name:"GPT-3 175B",      params:175,  layers:96,  hidden:12288, kv_heads:96, heads:96,  bytes:2 },
+];
 
-function calcKVCache(model: typeof LLM_MODELS[0], seq_len: number, batch: number) {
-  // KV cache = 2 * layers * kv_heads * (hidden/heads) * seq_len * batch * 2bytes
-  const head_dim = model.hidden / model.heads;
-  const kv_bytes = 2 * model.layers * model.kv_heads * head_dim * seq_len * batch * 2;
-  return kv_bytes / 1e9; // GB
-}
-
-function calcArithmeticIntensity(model: typeof LLM_MODELS[0], batch: number) {
-  // During decode: ops ≈ 2 * params * batch, bytes ≈ params * bytes_per_param
-  // Arithmetic intensity = ops / bytes
-  const ops = 2 * model.params * 1e9 * batch;
-  const bytes = model.params * 1e9 * model.bytes_per_param;
-  return ops / bytes; // ops/byte
-}
-
-function classifyBottleneck(gpu: typeof GPU_SPECS[0], arithIntensity: number) {
-  if (arithIntensity < gpu.ops_per_byte * 0.5) return "Memory BW";
-  if (arithIntensity < gpu.ops_per_byte) return "Transitioning";
-  return "Compute";
-}
-
-function calcMFU(gpu: typeof GPU_SPECS[0], actual_tflops: number) {
-  return (actual_tflops / gpu.tflops_fp16 * 100).toFixed(1);
-}
-
-function calcMBU(gpu: typeof GPU_SPECS[0], actual_bw_gbs: number) {
-  return (actual_bw_gbs / gpu.hbm_bw * 100).toFixed(1);
-}
-
-// TCO calculation
-function calcTCO(gpuCount: number, odPricePerGpu: number, months: number, pue: number, utilization: number) {
-  const compute_cost = gpuCount * odPricePerGpu * 24 * 30 * months * (utilization/100);
-  // Power: assume H100 700W avg, ~$0.07/kWh datacenter rate
-  const power_kw = gpuCount * 0.7 * pue;
-  const power_cost = power_kw * 24 * 30 * months * 0.07;
-  const networking_cost = compute_cost * 0.08; // ~8% of compute
-  const storage_cost = compute_cost * 0.05;
-  const total = compute_cost + power_cost + networking_cost + storage_cost;
-  return { compute_cost, power_cost, networking_cost, storage_cost, total, power_kw };
-}
-
-// Capacity: how many GPUs needed for target throughput
-function calcCapacity(model: typeof LLM_MODELS[0], gpu: typeof GPU_SPECS[0], target_tps: number, batch: number) {
-  // Effective tokens/sec per GPU at given batch
-  // Approx: bandwidth-limited decode throughput
-  const model_bytes = model.params * 1e9 * model.bytes_per_param;
-  const time_per_token_s = model_bytes / (gpu.hbm_bw * 1e9); // memory-bound decode
-  const tps_per_gpu = batch / time_per_token_s;
-  const gpus_needed = Math.ceil(target_tps / tps_per_gpu);
-  const weight_gpus = Math.ceil((model.params * model.bytes_per_param) / (gpu.vram * 0.7)); // 70% VRAM for weights
-  return { tps_per_gpu: Math.round(tps_per_gpu), gpus_needed: Math.max(gpus_needed, weight_gpus), weight_gpus };
-}
-
-// ─── COMPONENTS ──────────────────────────────────────────────────────────────
-function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick}
-      className={cn("px-4 py-2.5 text-xs font-medium rounded-lg transition-all whitespace-nowrap",
-        active ? "bg-[#0c1422] text-cyan-400 border border-white/[0.08]" : "text-slate-500 hover:text-slate-300")}>
-      {children}
-    </button>
-  );
-}
-
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
 function GlowCard({ children, className, selected }: { children: React.ReactNode; className?: string; selected?: boolean }) {
   return (
-    <div className={cn("relative rounded-2xl border p-[2px] transition-all", selected ? "border-cyan-400/40" : "border-white/[0.06] hover:border-white/[0.1]", className)}>
-      <GlowingEffect spread={28} glow={selected} disabled={false} proximity={55} inactiveZone={0.01} borderWidth={selected ? 2 : 1} />
-      <div className="relative rounded-[calc(1rem-2px)] bg-[#060d1a] h-full">
-        {children}
-      </div>
+    <div className={cn("relative rounded-2xl border p-[2px] transition-all", selected ? "border-cyan-400/40":"border-white/[0.06] hover:border-white/[0.1]", className)}>
+      <GlowingEffect spread={26} glow={selected} disabled={false} proximity={55} inactiveZone={0.01} borderWidth={selected?2:1} />
+      <div className="relative rounded-[calc(1rem-2px)] bg-[#060d1a] h-full">{children}</div>
     </div>
   );
 }
 
-function MetricBadge({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <div className={cn("flex flex-col items-center bg-white/[0.03] rounded-lg p-2.5 border border-white/[0.05]")}>
-      <div className={cn("text-lg font-bold font-mono", color)}>{value}</div>
-      <div className="text-[9px] text-slate-600 uppercase tracking-wider mt-0.5">{label}</div>
-    </div>
-  );
+function Badge({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded border", className)}>{children}</span>;
 }
 
-function SectionHeader({ icon, title, sub }: { icon: React.ReactNode; title: string; sub?: string }) {
+function SectionHdr({ icon, title, sub }: { icon: React.ReactNode; title: string; sub?: string }) {
   return (
-    <div className="flex items-center gap-2.5 mb-5">
-      <div className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.07] flex items-center justify-center text-slate-400 flex-shrink-0">
-        {icon}
-      </div>
+    <div className="flex items-center gap-2.5 mb-4">
+      <div className="w-7 h-7 rounded-lg bg-white/[0.04] border border-white/[0.07] flex items-center justify-center text-slate-400 flex-shrink-0">{icon}</div>
       <div>
         <div className="text-sm font-bold text-white">{title}</div>
         {sub && <div className="text-[10px] text-slate-600 mt-0.5">{sub}</div>}
@@ -220,72 +242,110 @@ function SectionHeader({ icon, title, sub }: { icon: React.ReactNode; title: str
   );
 }
 
-// ─── MAIN ─────────────────────────────────────────────────────────────────────
-export default function Page() {
-  const [activeTab, setActiveTab] = useState<"overview"|"workload"|"capacity"|"tco"|"npi">("overview");
-  const [selGpuId, setSelGpuId] = useState("h100-sxm5");
-  const [selModelIdx, setSelModelIdx] = useState(1); // Llama 3.1 70B
-  const [batchSize, setBatchSize] = useState(8);
-  const [seqLen, setSeqLen] = useState(2048);
-  const [targetTps, setTargetTps] = useState(1000);
-  const [gpuCount, setGpuCount] = useState(64);
-  const [pue, setPue] = useState(1.3);
-  const [utilization, setUtilization] = useState(70);
-  const [months, setMonths] = useState(12);
-  const [selProvider, setSelProvider] = useState("all");
-  const [selKernel, setSelKernel] = useState(0);
-
-  const gpu = GPU_SPECS.find(g => g.id === selGpuId) || GPU_SPECS[0];
-  const model = LLM_MODELS[selModelIdx];
-  const kernel = KERNELS[selKernel];
-  const provider = selProvider === "all" ? null : PROVIDERS.find(p => p.name === selProvider);
-
-  // Derived calculations
-  const weights_gb = calcModelMemory(model);
-  const kv_gb = calcKVCache(model, seqLen, batchSize);
-  const total_vram = weights_gb + kv_gb;
-  const arith_intensity = calcArithmeticIntensity(model, batchSize);
-  const bottleneck = classifyBottleneck(gpu, arith_intensity);
-  const capacity = calcCapacity(model, gpu, targetTps, batchSize);
-
-  const cheapestPrice = useMemo(() => {
-    let min = Infinity;
-    PROVIDERS.forEach(p => {
-      const pricing = p.pricing[selGpuId as keyof typeof p.pricing] as {od:number,spot:number|null}|undefined;
-      if (pricing) min = Math.min(min, pricing.spot ?? pricing.od);
-    });
-    return min === Infinity ? null : min;
-  }, [selGpuId]);
-
-  const odPrice = useMemo(() => {
-    let min = Infinity;
-    PROVIDERS.forEach(p => {
-      const pricing = p.pricing[selGpuId as keyof typeof p.pricing] as {od:number,spot:number|null}|undefined;
-      if (pricing) min = Math.min(min, pricing.od);
-    });
-    return min === Infinity ? 4.25 : min;
-  }, [selGpuId]);
-
-  const tco = calcTCO(gpuCount, odPrice, months, pue, utilization);
-  const tco_optimized = calcTCO(
-    Math.ceil(capacity.gpus_needed / (kernel.speedup * 0.7)),
-    cheapestPrice || odPrice,
-    months, pue, utilization
+function Tab({ active, onClick, children }: { active:boolean; onClick:()=>void; children:React.ReactNode }) {
+  return (
+    <button onClick={onClick}
+      className={cn("px-4 py-2 text-xs font-medium rounded-lg transition-all whitespace-nowrap",
+        active ? "bg-[#0c1422] text-cyan-400 border border-white/[0.08]":"text-slate-500 hover:text-slate-300")}>
+      {children}
+    </button>
   );
+}
 
-  const gpus_for_model = Math.ceil(weights_gb / (gpu.vram * 0.75));
-  const vram_headroom = (gpu.vram - (weights_gb / gpus_for_model) - (kv_gb / gpus_for_model)).toFixed(1);
+// ─── MAIN PAGE ─────────────────────────────────────────────────────────────────
+export default function Page() {
+  const [tab, setTab]           = useState<"market"|"workload"|"capacity"|"tco"|"npi">("market");
+  const [selGpu, setSelGpu]     = useState("h100-sxm");
+  const [selModel, setSelModel] = useState(1);
+  const [selKernel, setSelKernel] = useState(0);
+  const [selProvider, setSelProvider] = useState<string|null>(null);
+  const [filterTier, setFilterTier]   = useState<string>("all");
+  const [sortBy, setSortBy]           = useState<"od"|"speedup"|"tflops"|"vram">("od");
+  const [searchQ, setSearchQ]         = useState("");
+  const [batchSize, setBatchSize]     = useState(8);
+  const [seqLen, setSeqLen]           = useState(2048);
+  const [targetTps, setTargetTps]     = useState(1000);
+  const [gpuCount, setGpuCount]       = useState(64);
+  const [pue, setPue]                 = useState(1.3);
+  const [util, setUtil]               = useState(70);
+  const [months, setMonths]           = useState(12);
+  const [budget, setBudget]           = useState(5000);
+
+  const gpuSpec  = GPU_SPECS[selGpu];
+  const model    = LLM_MODELS[selModel];
+  const kernel   = KERNELS[selKernel];
+
+  // Flat list of all GPU offerings for the market view
+  const allOfferings = useMemo(() => {
+    const rows: {
+      providerId: string; providerName: string; logo: string; color: string;
+      tier: string; gpu: string; gpuSpec: typeof GPU_SPECS[string];
+      od: number; spot: number|null; note: string;
+      ib: boolean; egress_free: boolean; green: boolean; sla: boolean;
+    }[] = [];
+    PROVIDERS.forEach(p => {
+      p.gpus.forEach(g => {
+        const spec = GPU_SPECS[g.gpu];
+        if (!spec) return;
+        rows.push({
+          providerId: p.id, providerName: p.name, logo: p.logo, color: p.color,
+          tier: p.tier, gpu: g.gpu, gpuSpec: spec,
+          od: g.od, spot: g.spot, note: g.note,
+          ib: p.ib, egress_free: p.egress_free, green: p.green, sla: p.sla,
+        });
+      });
+    });
+    return rows
+      .filter(r =>
+        (filterTier === "all" || r.tier === filterTier) &&
+        (!searchQ || r.providerName.toLowerCase().includes(searchQ.toLowerCase()) ||
+         r.gpuSpec.name.toLowerCase().includes(searchQ.toLowerCase()))
+      )
+      .sort((a,b) => {
+        if (sortBy === "od")      return a.od - b.od;
+        if (sortBy === "speedup") return b.od - a.od; // costliest = least speedup value
+        if (sortBy === "tflops")  return b.gpuSpec.tflops_fp16 - a.gpuSpec.tflops_fp16;
+        if (sortBy === "vram")    return b.gpuSpec.vram - a.gpuSpec.vram;
+        return a.od - b.od;
+      });
+  }, [filterTier, searchQ, sortBy]);
+
+  // Best price for selected GPU
+  const bestOd   = useMemo(() => Math.min(...allOfferings.filter(r=>r.gpu===selGpu).map(r=>r.od)), [allOfferings, selGpu]);
+  const bestSpot = useMemo(() => {
+    const spots = allOfferings.filter(r=>r.gpu===selGpu&&r.spot!==null).map(r=>r.spot as number);
+    return spots.length ? Math.min(...spots) : null;
+  }, [allOfferings, selGpu]);
+
+  // Workload calcs
+  const wGb    = model.params * model.bytes;
+  const kvGb   = 2 * model.layers * model.kv_heads * (model.hidden/model.heads) * seqLen * batchSize * model.bytes / 1e9;
+  const totVram= wGb + kvGb;
+  const arith  = (2 * model.params * 1e9 * batchSize) / (model.params * 1e9 * model.bytes);
+  const bottleneck = arith < gpuSpec.ops_per_byte * 0.5 ? "Memory BW" : arith < gpuSpec.ops_per_byte ? "Transitioning" : "Compute";
+  const minGpus = Math.ceil(wGb / (gpuSpec.vram * 0.75));
+
+  // TCO
+  const tco = useMemo(() => {
+    const compute = gpuCount * bestOd * 24 * 30 * months * (util/100);
+    const power   = gpuCount * (gpuSpec.tdp/1000) * pue * 24 * 30 * months * 0.07;
+    const net     = compute * 0.08;
+    const stor    = compute * 0.05;
+    const total   = compute + power + net + stor;
+    const opt     = total / (3.8 * kernel.speedup); // SkyPilot spot × kernel
+    return { compute, power, net, stor, total, opt, power_kw: gpuCount*(gpuSpec.tdp/1000)*pue };
+  }, [gpuCount, bestOd, months, util, gpuSpec, pue, kernel.speedup]);
 
   return (
     <div className="min-h-screen bg-[#030712] text-slate-100 selection:bg-cyan-400/20">
-      {/* Ambient */}
+      {/* ambient */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-0 left-1/3 w-[700px] h-[500px] rounded-full bg-cyan-500/[0.025] blur-[140px]" />
         <div className="absolute bottom-0 right-1/4 w-[600px] h-[500px] rounded-full bg-violet-500/[0.03] blur-[140px]" />
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff05_1px,transparent_1px),linear-gradient(to_bottom,#ffffff05_1px,transparent_1px)] bg-[size:48px_48px]" />
       </div>
 
-      <div className="relative z-10 max-w-[1360px] mx-auto px-5 py-7 space-y-6">
+      <div className="relative z-10 max-w-[1380px] mx-auto px-5 py-7 space-y-5">
 
         {/* ── HEADER ── */}
         <header className="flex items-start justify-between flex-wrap gap-5">
@@ -297,45 +357,41 @@ export default function Page() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-lg font-bold text-white tracking-tight">GPUMarketplace</span>
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-400 border border-violet-500/25">FLUIDSTACK · GTC26</span>
+                  <Badge className="bg-violet-500/15 text-violet-400 border-violet-500/25">FLUIDSTACK · GTC26</Badge>
                 </div>
-                <p className="text-xs text-slate-500">Capacity Planning · TCO · Workload Characterization · NPI Intelligence</p>
+                <p className="text-xs text-slate-500 mt-0.5">12 Providers · Neoclouds + Hyperscalers · Capacity Planning · TCO · NPI</p>
               </div>
             </div>
             <h1 className="text-3xl font-bold text-white leading-tight tracking-tight max-w-2xl">
-              Infrastructure intelligence for<br/>
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-violet-400">
-                AI compute capacity planning.
-              </span>
+              GPU compute intelligence for<br/>
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-violet-400">every stage of AI infrastructure.</span>
             </h1>
             <p className="text-slate-500 text-xs mt-2 max-w-xl leading-relaxed">
-              Model your workload&apos;s bottleneck profile, compute TCO across 6 providers, plan GPU cluster capacity,
-              and apply GPU MODE&apos;s top kernels to reduce infrastructure spend.
+              Compare 12 providers — neoclouds, marketplaces, hyperscalers. Model workload bottlenecks, compute TCO, plan cluster capacity with GPU MODE kernel savings.
             </p>
           </div>
           <div className="flex flex-col gap-1.5">
             {[
-              {d:"bg-green-400", t:"Live GPU pricing · 6 providers"},
-              {d:"bg-cyan-400",  t:"GPU MODE kernelbot-data (HuggingFace)"},
-              {d:"bg-violet-400",t:"7-layer inference model · roofline analysis"},
-              {d:"bg-amber-400", t:"NVLink topology · power & PUE modeling"},
+              {d:"bg-green-400",  t:`${PROVIDERS.length} providers · ${allOfferings.length} GPU configs`},
+              {d:"bg-cyan-400",   t:"GPUMODE/kernelbot-data · polls every 5 min"},
+              {d:"bg-violet-400", t:"7-layer inference · roofline analysis"},
+              {d:"bg-amber-400",  t:"TCO · PUE · power · NPI phases"},
             ].map(p=>(
               <div key={p.t} className="flex items-center gap-2 text-[11px] text-slate-400 bg-white/[0.02] border border-white/[0.05] rounded-full px-3 py-1">
-                <span className={`w-1.5 h-1.5 rounded-full ${p.d} animate-pulse flex-shrink-0`} />
-                {p.t}
+                <span className={`w-1.5 h-1.5 rounded-full ${p.d} animate-pulse flex-shrink-0`} />{p.t}
               </div>
             ))}
           </div>
         </header>
 
-        {/* ── GPU SELECTOR STRIP ── */}
+        {/* ── GPU QUICK-SELECT ── */}
         <div className="flex gap-2 overflow-x-auto pb-1">
-          {GPU_SPECS.map(g => (
-            <button key={g.id} onClick={() => setSelGpuId(g.id)}
-              className={cn("flex-shrink-0 px-4 py-2.5 rounded-xl border text-xs font-medium transition-all",
-                selGpuId===g.id ? "bg-cyan-400/10 border-cyan-400/40 text-cyan-400" : "bg-white/[0.03] border-white/[0.07] text-slate-400 hover:border-white/[0.12]")}>
+          {Object.entries(GPU_SPECS).map(([id,g]) => (
+            <button key={id} onClick={()=>setSelGpu(id)}
+              className={cn("flex-shrink-0 px-3 py-2 rounded-xl border text-xs font-medium transition-all",
+                selGpu===id ? "bg-cyan-400/10 border-cyan-400/40 text-cyan-400":"bg-white/[0.03] border-white/[0.07] text-slate-400 hover:border-white/[0.12]")}>
               <div className="font-bold">{g.name}</div>
-              <div className="text-[9px] opacity-60 mt-0.5">{g.vram}GB · {(g.tflops_fp16/1000).toFixed(1)}PFLOPS</div>
+              <div className="text-[9px] opacity-60 mt-0.5">{g.vram}GB · {g.hbm_bw}GB/s BW</div>
             </button>
           ))}
         </div>
@@ -343,19 +399,19 @@ export default function Page() {
         {/* ── STAT STRIP ── */}
         <ul className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {[
-            { icon:<DollarSign className="w-3.5 h-3.5"/>, label:"Best price/hr", val: cheapestPrice ? `$${cheapestPrice.toFixed(2)}` : "—",  color:"text-green-400", sub:"spot or on-demand" },
-            { icon:<Cpu className="w-3.5 h-3.5"/>,        label:"FP16 TFLOPS",  val:`${gpu.tflops_fp16}`, color:"text-cyan-400",   sub:gpu.name },
-            { icon:<Database className="w-3.5 h-3.5"/>,   label:"HBM bandwidth",val:`${gpu.hbm_bw} GB/s`, color:"text-violet-400", sub:`${gpu.hbm} · ${gpu.vram}GB` },
-            { icon:<Network className="w-3.5 h-3.5"/>,    label:"NVLink BW",    val: gpu.nvlink_bw ? `${gpu.nvlink_bw} GB/s` : "No NVLink", color:"text-amber-400",  sub: gpu.nvlink_gen ? `Gen ${gpu.nvlink_gen}` : "PCIe only" },
-            { icon:<Power className="w-3.5 h-3.5"/>,      label:"TDP",          val:`${gpu.tdp}W`,       color:"text-red-400",    sub:`MIG ×${gpu.mig_instances||"—"}` },
+            {icon:<DollarSign className="w-3.5 h-3.5"/>, l:"Best on-demand",  v:bestOd < Infinity ? `$${bestOd.toFixed(2)}` : "—",   c:"text-green-400",  s:gpuSpec.name},
+            {icon:<TrendingDown className="w-3.5 h-3.5"/>,l:"Best spot",      v:bestSpot!==null ? `$${bestSpot.toFixed(2)}` : "N/A", c:"text-cyan-400",   s:"preemptible"},
+            {icon:<Cpu className="w-3.5 h-3.5"/>,         l:"FP16 TFLOPS",   v:`${gpuSpec.tflops_fp16}`,                              c:"text-violet-400", s:gpuSpec.name},
+            {icon:<Database className="w-3.5 h-3.5"/>,    l:"HBM bandwidth", v:`${gpuSpec.hbm_bw} GB/s`,                             c:"text-amber-400",  s:`${gpuSpec.hbm}·${gpuSpec.vram}GB`},
+            {icon:<Network className="w-3.5 h-3.5"/>,     l:"NVLink BW",     v:gpuSpec.nvlink_bw?`${gpuSpec.nvlink_bw} GB/s`:"PCIe", c:"text-red-400",    s:"intra-node"},
           ].map(s=>(
-            <li key={s.label} className="relative min-h-[6.5rem] list-none">
+            <li key={s.l} className="relative min-h-[6rem] list-none">
               <GlowCard>
-                <div className="p-4 flex flex-col justify-between h-full min-h-[6.5rem]">
-                  <div className="flex items-center gap-1.5 text-slate-600">{s.icon}<span className="text-[9px] tracking-widest uppercase">{s.label}</span></div>
+                <div className="p-4 flex flex-col justify-between h-full min-h-[6rem]">
+                  <div className="flex items-center gap-1.5 text-slate-600">{s.icon}<span className="text-[9px] tracking-widest uppercase">{s.l}</span></div>
                   <div>
-                    <div className={`text-xl font-bold font-mono ${s.color}`}>{s.val}</div>
-                    <div className="text-[9px] text-slate-600 mt-0.5">{s.sub}</div>
+                    <div className={`text-xl font-bold font-mono ${s.c}`}>{s.v}</div>
+                    <div className="text-[9px] text-slate-600 mt-0.5">{s.s}</div>
                   </div>
                 </div>
               </GlowCard>
@@ -366,616 +422,154 @@ export default function Page() {
         {/* ── TABS ── */}
         <div className="flex bg-[#060d1a] border border-white/[0.07] rounded-xl p-1 gap-1 overflow-x-auto">
           {[
-            {id:"overview",   label:"📊 Overview"},
-            {id:"workload",   label:"🔬 Workload Analysis"},
-            {id:"capacity",   label:"🏗 Capacity Planning"},
-            {id:"tco",        label:"💰 TCO & Power"},
-            {id:"npi",        label:"🚀 NPI Intelligence"},
-          ].map(t=>(
-            <Tab key={t.id} active={activeTab===t.id} onClick={()=>setActiveTab(t.id as typeof activeTab)}>{t.label}</Tab>
-          ))}
+            {id:"market",   l:"🏪 GPU Marketplace"},
+            {id:"workload", l:"🔬 Workload Analysis"},
+            {id:"capacity", l:"🏗 Capacity Planning"},
+            {id:"tco",      l:"💰 TCO & Power"},
+            {id:"npi",      l:"🚀 NPI Intelligence"},
+          ].map(t=><Tab key={t.id} active={tab===t.id} onClick={()=>setTab(t.id as typeof tab)}>{t.l}</Tab>)}
         </div>
 
-        {/* ══════════════════════════════════════════════════════════════════
-            TAB 1: OVERVIEW
-        ══════════════════════════════════════════════════════════════════ */}
-        {activeTab === "overview" && (
-          <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-5">
-
-            {/* Provider pricing grid */}
-            <div>
-              <SectionHeader icon={<Server className="w-4 h-4"/>} title="GPU Compute Pricing" sub={`${gpu.name} · per GPU per hour · March 2026`} />
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {PROVIDERS.map(p => {
-                  const pricing = p.pricing[selGpuId as keyof typeof p.pricing] as {od:number,spot:number|null}|undefined;
-                  if (!pricing) return (
-                    <GlowCard key={p.name}>
-                      <div className="p-4 opacity-40">
-                        <div className="flex items-center gap-2 mb-3">
-                          <div className="w-7 h-7 rounded-lg text-[10px] font-bold flex items-center justify-center" style={{background:`${p.color}18`,border:`1px solid ${p.color}33`,color:p.color}}>{p.logo}</div>
-                          <div className="text-sm font-semibold text-white">{p.name}</div>
-                        </div>
-                        <div className="text-xs text-slate-600">Not available for {gpu.name}</div>
-                      </div>
-                    </GlowCard>
-                  );
-                  const eff = (pricing.spot || pricing.od) / (kernel.speedup);
-                  const saving = Math.round((1 - eff/pricing.od)*100);
-                  return (
-                    <GlowCard key={p.name} selected={selProvider===p.name} className="cursor-pointer" >
-                      <div className="p-4" onClick={()=>setSelProvider(prev=>prev===p.name?"all":p.name)}>
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-lg text-[10px] font-bold flex items-center justify-center flex-shrink-0" style={{background:`${p.color}18`,border:`1px solid ${p.color}33`,color:p.color}}>{p.logo}</div>
-                            <div className="text-sm font-semibold text-white">{p.name}</div>
-                          </div>
-                        </div>
-                        <div className="space-y-1.5">
-                          <div className="flex justify-between">
-                            <span className="text-xs text-slate-500">On-demand</span>
-                            <span className="text-sm font-bold text-white font-mono">${pricing.od.toFixed(2)}<span className="text-slate-600 text-xs">/hr</span></span>
-                          </div>
-                          {pricing.spot && (
-                            <div className="flex justify-between">
-                              <span className="text-xs text-slate-500">Spot / Preemptible</span>
-                              <span className="text-sm font-bold text-green-400 font-mono">${pricing.spot.toFixed(2)}<span className="text-slate-600 text-xs">/hr</span></span>
-                            </div>
-                          )}
-                          <div className="flex justify-between bg-cyan-400/5 border border-cyan-400/10 rounded-lg px-2.5 py-1.5 mt-2">
-                            <span className="text-xs text-cyan-400">+ {kernel.name.split(" ")[0]} kernel</span>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-bold text-cyan-400 font-mono">${eff.toFixed(2)}/hr</span>
-                              <span className="text-[9px] font-bold text-green-400 bg-green-400/10 px-1.5 py-0.5 rounded-full">−{saving}%</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </GlowCard>
-                  );
-                })}
+        {/* ══ TAB: MARKET ══════════════════════════════════════════════════════ */}
+        {tab === "market" && (
+          <div className="space-y-4">
+            {/* toolbar */}
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-600" />
+                <input className="w-full bg-white/[0.04] border border-white/[0.07] rounded-xl pl-9 pr-3 py-2.5 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-cyan-400/40 transition-colors"
+                  placeholder="Search provider or GPU model..." value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
               </div>
-
-              {/* 7-layer model */}
-              <div className="mt-6">
-                <SectionHeader icon={<Layers className="w-4 h-4"/>} title="7-Layer Inference Model" sub="Bottleneck classification per inference phase" />
-                <div className="space-y-2">
-                  {INFERENCE_LAYERS.map(layer=>(
-                    <GlowCard key={layer.id}>
-                      <div className="flex items-center gap-4 px-4 py-3">
-                        <div className="w-7 h-7 rounded-lg bg-white/[0.04] border border-white/[0.07] flex items-center justify-center text-sm flex-shrink-0">
-                          {layer.icon}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <span className="text-xs font-bold text-white">{layer.id}. {layer.name}</span>
-                            <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded border", BOUND_COLOR[layer.bound])}>{layer.bound}</span>
-                          </div>
-                          <p className="text-[10px] text-slate-500 leading-relaxed">{layer.desc}</p>
-                        </div>
-                        <div className="text-right flex-shrink-0">
-                          <div className="text-[9px] text-slate-600 uppercase tracking-wide">{layer.metric}</div>
-                          <div className={cn("text-xs font-bold mt-0.5",
-                            layer.bound==="Compute"   ? "text-red-400" :
-                            layer.bound==="Memory BW" ? "text-violet-400" :
-                            layer.bound==="Network"   ? "text-cyan-400" : "text-slate-400")}>
-                            {layer.bound==="Compute"   ? `${gpu.tflops_fp16} TF` :
-                             layer.bound==="Memory BW" ? `${gpu.hbm_bw} GB/s` :
-                             layer.bound==="Network"   ? gpu.nvlink_bw ? `${gpu.nvlink_bw} GB/s` : "PCIe" : "—"}
-                          </div>
-                        </div>
-                      </div>
-                    </GlowCard>
-                  ))}
-                </div>
-              </div>
+              <select value={filterTier} onChange={e=>setFilterTier(e.target.value)}
+                className="bg-white/[0.04] border border-white/[0.07] rounded-xl px-3 py-2.5 text-xs text-slate-300 focus:outline-none focus:border-cyan-400/40 cursor-pointer">
+                <option value="all" className="bg-[#060d1a]">All tiers</option>
+                <option value="neocloud" className="bg-[#060d1a]">Neoclouds</option>
+                <option value="marketplace" className="bg-[#060d1a]">Marketplace</option>
+                <option value="hyperscaler" className="bg-[#060d1a]">Hyperscalers</option>
+              </select>
+              <select value={sortBy} onChange={e=>setSortBy(e.target.value as typeof sortBy)}
+                className="bg-white/[0.04] border border-white/[0.07] rounded-xl px-3 py-2.5 text-xs text-slate-300 focus:outline-none focus:border-cyan-400/40 cursor-pointer">
+                <option value="od" className="bg-[#060d1a]">↕ On-demand price</option>
+                <option value="tflops" className="bg-[#060d1a]">↕ TFLOPS</option>
+                <option value="vram" className="bg-[#060d1a]">↕ VRAM</option>
+              </select>
+            </div>
+            <div className="flex justify-between text-[10px] text-slate-600">
+              <span>{allOfferings.length} GPU configurations · {new Set(allOfferings.map(r=>r.providerId)).size} providers</span>
+              <span>Prices per GPU/hr · March 2026 · Sources: IntuitionLabs, Saturn Cloud, provider pages</span>
             </div>
 
-            {/* Right: kernel selector + quick roofline */}
-            <div className="space-y-4">
-              <GlowCard>
-                <div className="p-5">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Sparkles className="w-4 h-4 text-violet-400" />
-                    <span className="text-[10px] font-bold text-slate-500 tracking-widest uppercase">GPU MODE · kernelbot-data</span>
-                    <a href="https://huggingface.co/datasets/GPUMODE/kernelbot-data" target="_blank" rel="noopener noreferrer" className="ml-auto text-[9px] text-slate-600 hover:text-slate-400 flex items-center gap-1">HF <ExternalLink className="w-2.5 h-2.5"/></a>
-                  </div>
-                  <div className="space-y-2">
-                    {KERNELS.map((k,i)=>(
-                      <div key={k.rank}
-                        className={cn("relative rounded-xl border p-[1px] cursor-pointer transition-all",
-                          i===selKernel?"border-cyan-400/40":"border-white/[0.05] hover:border-white/[0.1]")}
-                        onClick={()=>setSelKernel(i)}>
-                        <GlowingEffect spread={15} glow={i===selKernel} disabled={false} proximity={35} inactiveZone={0.01} borderWidth={1}/>
-                        <div className="relative flex items-center gap-3 rounded-[calc(0.75rem-1px)] bg-[#060d1a] px-3 py-2.5">
-                          <div className={cn("w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0",
-                            i===selKernel?"bg-cyan-400/20 text-cyan-400":"bg-white/[0.04] text-slate-500")}>{k.rank}</div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-xs font-semibold text-white">{k.name}</div>
-                            <div className="text-[9px] text-slate-600">{k.op} · {k.workload}</div>
+            {/* Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+              {allOfferings.map((r,i) => {
+                const tierStyle = TIER_STYLE[r.tier];
+                const effPrice  = (r.spot ?? r.od) / kernel.speedup;
+                const saving    = Math.round((1 - effPrice/r.od)*100);
+                const isSel     = selProvider===r.providerId && selGpu===r.gpu;
+                return (
+                  <GlowCard key={`${r.providerId}-${r.gpu}-${i}`} selected={isSel} className="cursor-pointer">
+                    <div className="p-4" onClick={()=>{setSelProvider(isSel?null:r.providerId); setSelGpu(r.gpu);}}>
+                      {/* Header */}
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-7 h-7 rounded-lg text-[9px] font-bold flex items-center justify-center flex-shrink-0"
+                            style={{background:`${r.color}18`,border:`1px solid ${r.color}33`,color:r.color}}>{r.logo}</div>
+                          <div className="min-w-0">
+                            <div className="text-[10px] text-slate-500">{r.providerName}</div>
+                            <div className="text-xs font-semibold text-white truncate">{r.gpuSpec.name}</div>
                           </div>
-                          <div className="text-sm font-bold text-green-400 font-mono">{k.speedup}×</div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </GlowCard>
-
-              {/* NVLink topology quick ref */}
-              <GlowCard>
-                <div className="p-5">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Network className="w-4 h-4 text-cyan-400"/>
-                    <span className="text-[10px] font-bold text-slate-500 tracking-widest uppercase">Interconnect Topology</span>
-                  </div>
-                  <div className="space-y-3">
-                    {[
-                      {label:"NVLink 4 (H100 intra-node)", bw:"900 GB/s", color:"text-cyan-400", note:"18 links × 50 GB/s · 8-GPU full mesh"},
-                      {label:"NVLink 5 (B200 intra-node)",  bw:"1.8 TB/s", color:"text-violet-400", note:"18 links × 100 GB/s"},
-                      {label:"NDR InfiniBand (inter-node)", bw:"400 Gb/s", color:"text-amber-400",  note:"~50 GB/s per port per GPU"},
-                      {label:"PCIe Gen5 x16 (fallback)",    bw:"128 GB/s", color:"text-slate-400",  note:"7× slower than NVLink 4"},
-                    ].map(r=>(
-                      <div key={r.label} className="flex items-center justify-between">
-                        <div>
-                          <div className="text-xs text-slate-300">{r.label}</div>
-                          <div className="text-[9px] text-slate-600">{r.note}</div>
-                        </div>
-                        <span className={`text-sm font-bold font-mono ${r.color}`}>{r.bw}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-4 bg-amber-400/5 border border-amber-400/15 rounded-lg p-3 text-[10px] text-amber-400/80 leading-relaxed">
-                    <AlertTriangle className="w-3 h-3 inline mr-1"/>
-                    Tensor Parallelism &gt;4 on InfiniBand becomes comm-bound. Use Pipeline Parallelism across nodes + TP within node for optimal scaling.
-                  </div>
-                </div>
-              </GlowCard>
-            </div>
-          </div>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════════
-            TAB 2: WORKLOAD ANALYSIS
-        ══════════════════════════════════════════════════════════════════ */}
-        {activeTab === "workload" && (
-          <div className="grid grid-cols-1 xl:grid-cols-[280px_1fr] gap-5">
-
-            {/* Controls */}
-            <div className="space-y-4">
-              <GlowCard>
-                <div className="p-5 space-y-4">
-                  <SectionHeader icon={<Cpu className="w-4 h-4"/>} title="Model" sub="Select LLM to characterize"/>
-                  <div className="space-y-2">
-                    {LLM_MODELS.map((m,i)=>(
-                      <button key={m.name} onClick={()=>setSelModelIdx(i)}
-                        className={cn("w-full text-left px-3 py-2.5 rounded-xl border text-xs transition-all",
-                          i===selModelIdx?"bg-cyan-400/8 border-cyan-400/30 text-white":"bg-white/[0.02] border-white/[0.05] text-slate-400 hover:border-white/[0.1]")}>
-                        <div className="font-bold">{m.name}</div>
-                        <div className="text-[9px] opacity-60 mt-0.5">{m.params}B params · {m.layers} layers</div>
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="space-y-3 pt-2 border-t border-white/[0.05]">
-                    <div>
-                      <div className="flex justify-between text-xs mb-1.5">
-                        <span className="text-slate-500">Batch size</span>
-                        <span className="text-white font-bold font-mono">{batchSize}</span>
-                      </div>
-                      <input type="range" min={1} max={128} step={1} value={batchSize} onChange={e=>setBatchSize(Number(e.target.value))} className="w-full accent-cyan-400" />
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-xs mb-1.5">
-                        <span className="text-slate-500">Sequence length</span>
-                        <span className="text-white font-bold font-mono">{seqLen.toLocaleString()}</span>
-                      </div>
-                      <input type="range" min={512} max={32768} step={512} value={seqLen} onChange={e=>setSeqLen(Number(e.target.value))} className="w-full accent-cyan-400" />
-                    </div>
-                  </div>
-                </div>
-              </GlowCard>
-            </div>
-
-            {/* Analysis */}
-            <div className="space-y-4">
-              {/* Roofline summary */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <MetricBadge label="Model size" value={`${weights_gb.toFixed(1)} GB`} color="text-cyan-400"/>
-                <MetricBadge label="KV cache" value={`${kv_gb.toFixed(1)} GB`} color="text-violet-400"/>
-                <MetricBadge label="Total VRAM" value={`${total_vram.toFixed(1)} GB`} color={total_vram > gpu.vram ? "text-red-400" : "text-green-400"}/>
-                <MetricBadge label="Min GPUs" value={`${gpus_for_model}`} color="text-amber-400"/>
-              </div>
-
-              {/* Roofline analysis */}
-              <GlowCard>
-                <div className="p-5">
-                  <SectionHeader icon={<Activity className="w-4 h-4"/>} title="Roofline Analysis" sub={`${model.name} on ${gpu.name} · batch=${batchSize}`}/>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="space-y-3">
-                      {[
-                        {label:"GPU ops:byte ratio",  val:`${gpu.ops_per_byte}`, unit:"ops/byte", color:"text-cyan-400", desc:"GPU's compute/bandwidth ceiling"},
-                        {label:"Model arithmetic intensity", val:arith_intensity.toFixed(1), unit:"ops/byte", color: arith_intensity < gpu.ops_per_byte ? "text-red-400":"text-green-400", desc:`batch=${batchSize} decode phase`},
-                        {label:"Bottleneck",    val:bottleneck, unit:"", color: bottleneck==="Compute"?"text-red-400":bottleneck==="Memory BW"?"text-violet-400":"text-amber-400", desc:"roofline classification"},
-                        {label:"MFU estimate",  val:`~${(Math.min(arith_intensity/gpu.ops_per_byte,1)*40+10).toFixed(0)}%`, unit:"", color:"text-green-400", desc:"Model FLOP utilization (decode)"},
-                        {label:"MBU estimate",  val:`~${Math.min(95, arith_intensity < gpu.ops_per_byte ? 75 : 45).toFixed(0)}%`, unit:"", color:"text-violet-400", desc:"Memory bandwidth utilization"},
-                      ].map(r=>(
-                        <div key={r.label} className="flex items-center justify-between py-2 border-b border-white/[0.04]">
-                          <div>
-                            <div className="text-xs text-slate-400">{r.label}</div>
-                            <div className="text-[9px] text-slate-600">{r.desc}</div>
-                          </div>
-                          <span className={`text-sm font-bold font-mono ${r.color}`}>{r.val}<span className="text-slate-600 text-xs ml-0.5">{r.unit}</span></span>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="space-y-3">
-                      <div className={cn("rounded-xl border p-4 text-xs",
-                        bottleneck==="Memory BW" ? "bg-violet-400/5 border-violet-400/20" : "bg-red-400/5 border-red-400/20")}>
-                        <div className={cn("font-bold text-sm mb-2", bottleneck==="Memory BW"?"text-violet-400":"text-red-400")}>
-                          {bottleneck==="Memory BW" ? "⚠️ Memory-bandwidth bound" : bottleneck==="Compute" ? "✅ Compute bound" : "🔄 Transitioning"}
-                        </div>
-                        <p className="text-slate-400 leading-relaxed text-[11px]">
-                          {bottleneck==="Memory BW"
-                            ? `With batch=${batchSize}, arithmetic intensity (${arith_intensity.toFixed(1)} ops/byte) is below ${gpu.name}'s ceiling (${gpu.ops_per_byte} ops/byte). Decode is loading weights from HBM faster than it can compute. Fixes: increase batch size to ${Math.ceil(gpu.ops_per_byte * model.params * model.bytes_per_param / (2 * model.params * 1e9) * 1e9)} or use FlashAttention to reduce memory pressure.`
-                            : `With batch=${batchSize}, the workload saturates Tensor Cores. MFU is high. Consider reducing batch for lower latency, or fusing kernels to maintain compute utilization.`}
-                        </p>
+                        <Badge className={cn(tierStyle.bg, tierStyle.color, tierStyle.border)}>{tierStyle.label}</Badge>
                       </div>
 
-                      {/* VRAM breakdown */}
-                      <div className="bg-white/[0.02] rounded-xl p-4 border border-white/[0.05] space-y-2">
-                        <div className="text-xs font-bold text-slate-400 mb-2">VRAM breakdown</div>
+                      {/* Spec chips */}
+                      <div className="grid grid-cols-3 gap-1 mb-3">
                         {[
-                          {label:"Model weights", gb:weights_gb, color:"bg-cyan-400"},
-                          {label:`KV cache (seq=${seqLen})`, gb:kv_gb, color:"bg-violet-400"},
-                          {label:"Activations (est.)", gb:weights_gb*0.05, color:"bg-amber-400"},
-                        ].map(r=>{
-                          const pct = Math.min(100,(r.gb/(gpu.vram||80))*100);
-                          return (
-                            <div key={r.label}>
-                              <div className="flex justify-between text-[10px] mb-1">
-                                <span className="text-slate-500">{r.label}</span>
-                                <span className="text-white font-mono">{r.gb.toFixed(1)} GB</span>
-                              </div>
-                              <div className="h-1.5 bg-white/[0.05] rounded-full overflow-hidden">
-                                <div className={`h-full rounded-full ${r.color} transition-all`} style={{width:`${pct}%`}}/>
-                              </div>
-                            </div>
-                          );
-                        })}
-                        <div className="flex justify-between text-[10px] pt-1 border-t border-white/[0.05]">
-                          <span className="text-slate-500">GPU VRAM available</span>
-                          <span className={cn("font-bold font-mono", total_vram > gpu.vram ? "text-red-400":"text-green-400")}>
-                            {gpu.vram} GB ({vram_headroom} GB free)
-                          </span>
-                        </div>
+                          {l:"VRAM",   v:`${r.gpuSpec.vram}GB`},
+                          {l:"TFLOPS", v:`${r.gpuSpec.tflops_fp16}`},
+                          {l:"HBM BW", v:`${r.gpuSpec.hbm_bw}`},
+                        ].map(s=>(
+                          <div key={s.l} className="bg-white/[0.03] rounded-lg p-1.5 text-center">
+                            <div className="text-[8px] text-slate-600">{s.l}</div>
+                            <div className="text-[10px] font-bold text-white">{s.v}</div>
+                          </div>
+                        ))}
                       </div>
-                    </div>
-                  </div>
-                </div>
-              </GlowCard>
 
-              {/* Per-layer bottleneck */}
-              <GlowCard>
-                <div className="p-5">
-                  <SectionHeader icon={<Layers className="w-4 h-4"/>} title="Phase-by-phase bottleneck" sub={`${model.name} · 7-layer inference profile`}/>
-                  <div className="grid grid-cols-7 gap-1.5">
-                    {INFERENCE_LAYERS.map(l=>{
-                      const isActive = l.bound==="Memory BW" || (l.bound==="Compute" && bottleneck==="Compute");
-                      return (
-                        <div key={l.id} className={cn("rounded-xl p-2.5 border text-center transition-all",
-                          isActive ? "bg-red-400/8 border-red-400/20" : "bg-white/[0.02] border-white/[0.05]")}>
-                          <div className="text-lg mb-1">{l.icon}</div>
-                          <div className="text-[9px] font-bold text-white leading-tight">{l.name.split(" ")[0]}</div>
-                          <div className={cn("text-[8px] mt-1 px-1 py-0.5 rounded font-bold", BOUND_COLOR[l.bound])}>{l.bound}</div>
-                          {isActive && <div className="text-[8px] text-red-400 mt-1 font-bold">BOTTLENECK</div>}
+                      {/* Feature badges */}
+                      <div className="flex gap-1 flex-wrap mb-3">
+                        {r.ib          && <Badge className="text-cyan-400 bg-cyan-400/10 border-cyan-400/20">IB</Badge>}
+                        {r.egress_free && <Badge className="text-green-400 bg-green-400/10 border-green-400/20">no egress</Badge>}
+                        {r.green       && <Badge className="text-emerald-400 bg-emerald-400/10 border-emerald-400/20">🌱 green</Badge>}
+                        {r.sla         && <Badge className="text-slate-400 bg-slate-400/10 border-slate-400/20">SLA</Badge>}
+                        {r.spot!==null && <Badge className="text-amber-400 bg-amber-400/10 border-amber-400/20">spot</Badge>}
+                      </div>
+
+                      {/* Pricing */}
+                      <div className="space-y-1.5 border-t border-white/[0.05] pt-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] text-slate-500">On-demand</span>
+                          <span className="text-sm font-bold text-white font-mono">${r.od.toFixed(2)}<span className="text-slate-600 text-[9px]">/hr</span></span>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </GlowCard>
-            </div>
-          </div>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════════
-            TAB 3: CAPACITY PLANNING
-        ══════════════════════════════════════════════════════════════════ */}
-        {activeTab === "capacity" && (
-          <div className="grid grid-cols-1 xl:grid-cols-[280px_1fr] gap-5">
-            <GlowCard>
-              <div className="p-5 space-y-4">
-                <SectionHeader icon={<BarChart3 className="w-4 h-4"/>} title="Capacity inputs" />
-                {[
-                  {label:"Target throughput (tokens/sec)", val:targetTps, set:setTargetTps, min:100,max:100000,step:100,fmt:(v:number)=>v.toLocaleString()},
-                  {label:"Batch size",  val:batchSize, set:setBatchSize, min:1,max:256,step:1,fmt:(v:number)=>String(v)},
-                  {label:"Sequence length", val:seqLen, set:setSeqLen, min:512,max:32768,step:512,fmt:(v:number)=>v.toLocaleString()},
-                ].map(s=>(
-                  <div key={s.label}>
-                    <div className="flex justify-between text-xs mb-1.5">
-                      <span className="text-slate-500">{s.label}</span>
-                      <span className="text-white font-bold font-mono">{s.fmt(s.val)}</span>
-                    </div>
-                    <input type="range" min={s.min} max={s.max} step={s.step} value={s.val}
-                      onChange={e=>s.set(Number(e.target.value))} className="w-full accent-cyan-400"/>
-                  </div>
-                ))}
-                <div className="pt-2 border-t border-white/[0.05]">
-                  <div className="text-[10px] font-bold text-slate-500 tracking-widest uppercase mb-2">Model</div>
-                  <select value={selModelIdx} onChange={e=>setSelModelIdx(Number(e.target.value))}
-                    className="w-full bg-white/[0.04] border border-white/[0.07] rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-cyan-400/40">
-                    {LLM_MODELS.map((m,i)=><option key={m.name} value={i} className="bg-[#060d1a]">{m.name}</option>)}
-                  </select>
-                </div>
-              </div>
-            </GlowCard>
-
-            <div className="space-y-4">
-              {/* Results */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <MetricBadge label="GPUs needed" value={String(capacity.gpus_needed)} color="text-amber-400"/>
-                <MetricBadge label="TPS per GPU" value={capacity.tps_per_gpu.toLocaleString()} color="text-cyan-400"/>
-                <MetricBadge label="Min for weights" value={`${capacity.weight_gpus} GPUs`} color="text-violet-400"/>
-                <MetricBadge label="NVLink nodes" value={`${Math.ceil(capacity.gpus_needed/8)}`} color="text-green-400"/>
-              </div>
-
-              <GlowCard>
-                <div className="p-5">
-                  <SectionHeader icon={<Server className="w-4 h-4"/>} title="Cluster topology recommendation" sub={`${model.name} · ${targetTps.toLocaleString()} tok/s target`}/>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="space-y-3">
-                      {[
-                        {label:"Tensor Parallelism", val:`TP=${Math.min(8,gpus_for_model)}`, color:"text-cyan-400", note:"Within node (NVLink). Keep TP≤8 to avoid comm bottleneck."},
-                        {label:"Pipeline Parallelism", val:`PP=${Math.max(1,Math.ceil(gpus_for_model/8))}`, color:"text-violet-400", note:"Across nodes (InfiniBand). Use for models >8×GPU."},
-                        {label:"Data Parallelism", val:`DP=${Math.max(1,Math.ceil(capacity.gpus_needed/Math.max(gpus_for_model,1)))}`, color:"text-green-400", note:"Replicas for throughput scaling."},
-                        {label:"Recommended config", val:`${gpus_for_model} GPUs / model`, color:"text-amber-400", note:`${Math.ceil(capacity.gpus_needed/gpus_for_model)} model replicas for target TPS`},
-                      ].map(r=>(
-                        <div key={r.label} className="py-2 border-b border-white/[0.04]">
+                        {r.spot!==null && (
                           <div className="flex justify-between items-center">
-                            <span className="text-xs text-slate-400">{r.label}</span>
-                            <span className={`text-sm font-bold font-mono ${r.color}`}>{r.val}</span>
+                            <span className="text-[10px] text-slate-500">Spot</span>
+                            <span className="text-sm font-bold text-green-400 font-mono">${r.spot.toFixed(2)}<span className="text-slate-600 text-[9px]">/hr</span></span>
                           </div>
-                          <div className="text-[9px] text-slate-600 mt-0.5">{r.note}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="space-y-3">
-                      <div className="bg-white/[0.02] rounded-xl p-4 border border-white/[0.05]">
-                        <div className="text-xs font-bold text-slate-400 mb-3">Cost across providers ({capacity.gpus_needed} GPUs)</div>
-                        {PROVIDERS.filter(p=>{
-                          const pricing = p.pricing[selGpuId as keyof typeof p.pricing] as {od:number,spot:number|null}|undefined;
-                          return !!pricing;
-                        }).map(p=>{
-                          const pricing = p.pricing[selGpuId as keyof typeof p.pricing] as {od:number,spot:number|null};
-                          const monthly = capacity.gpus_needed * pricing.od * 24 * 30;
-                          const spot_monthly = pricing.spot ? capacity.gpus_needed * pricing.spot * 24 * 30 : null;
-                          return (
-                            <div key={p.name} className="flex items-center justify-between py-1.5 border-b border-white/[0.04]">
-                              <div className="flex items-center gap-2">
-                                <div className="w-5 h-5 rounded text-[8px] font-bold flex items-center justify-center flex-shrink-0" style={{background:`${p.color}18`,color:p.color}}>{p.logo}</div>
-                                <span className="text-xs text-slate-400">{p.name}</span>
-                              </div>
-                              <div className="text-right">
-                                <div className="text-xs font-bold text-white font-mono">${Math.round(monthly/1000)}k/mo</div>
-                                {spot_monthly && <div className="text-[9px] text-green-400 font-mono">${Math.round(spot_monthly/1000)}k spot</div>}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {total_vram > gpu.vram && (
-                        <div className="bg-red-400/8 border border-red-400/20 rounded-xl p-3 text-[11px] text-red-400">
-                          <AlertTriangle className="w-3 h-3 inline mr-1"/>
-                          Model exceeds single GPU VRAM ({total_vram.toFixed(0)} GB &gt; {gpu.vram} GB). Minimum {gpus_for_model} GPUs required with tensor parallelism.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </GlowCard>
-            </div>
-          </div>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════════
-            TAB 4: TCO & POWER
-        ══════════════════════════════════════════════════════════════════ */}
-        {activeTab === "tco" && (
-          <div className="grid grid-cols-1 xl:grid-cols-[280px_1fr] gap-5">
-            <GlowCard>
-              <div className="p-5 space-y-4">
-                <SectionHeader icon={<DollarSign className="w-4 h-4"/>} title="TCO inputs" />
-                {[
-                  {label:"GPU count",    val:gpuCount,     set:setGpuCount,     min:8,   max:4096, step:8,   fmt:(v:number)=>String(v)},
-                  {label:"Planning horizon (months)", val:months, set:setMonths, min:1, max:60, step:1, fmt:(v:number)=>String(v)},
-                  {label:"PUE (data center efficiency)", val:pue, set:setPue, min:1.0, max:2.0, step:0.05, fmt:(v:number)=>v.toFixed(2)},
-                  {label:"GPU utilization %",  val:utilization, set:setUtilization, min:10,  max:100,  step:5,   fmt:(v:number)=>v+"%"},
-                ].map(s=>(
-                  <div key={s.label}>
-                    <div className="flex justify-between text-xs mb-1.5">
-                      <span className="text-slate-500">{s.label}</span>
-                      <span className="text-white font-bold font-mono">{s.fmt(s.val)}</span>
-                    </div>
-                    <input type="range" min={s.min} max={s.max} step={s.step} value={s.val}
-                      onChange={e=>s.set(Number(e.target.value))} className="w-full accent-cyan-400"/>
-                  </div>
-                ))}
-              </div>
-            </GlowCard>
-
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <MetricBadge label="Total TCO" value={`$${Math.round(tco.total/1000)}k`} color="text-red-400"/>
-                <MetricBadge label="Power draw" value={`${tco.power_kw.toFixed(0)} kW`} color="text-amber-400"/>
-                <MetricBadge label="With kernels" value={`$${Math.round(tco_optimized.total/1000)}k`} color="text-green-400"/>
-                <MetricBadge label="TCO saving" value={`${Math.round((1-tco_optimized.total/tco.total)*100)}%`} color="text-cyan-400"/>
-              </div>
-
-              <GlowCard>
-                <div className="p-5">
-                  <SectionHeader icon={<TrendingDown className="w-4 h-4"/>} title={`TCO breakdown · ${gpuCount} × ${gpu.name} · ${months} months`} />
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="space-y-3">
-                      {[
-                        {label:"Compute (cloud GPU)",    val:tco.compute_cost,    opt:tco_optimized.compute_cost, color:"bg-cyan-400",   icon:"💻"},
-                        {label:"Power (PUE="+pue+")",    val:tco.power_cost,      opt:tco_optimized.power_cost,   color:"bg-amber-400",  icon:"⚡"},
-                        {label:"Networking (est. 8%)",   val:tco.networking_cost, opt:tco_optimized.networking_cost,color:"bg-violet-400",icon:"🌐"},
-                        {label:"Storage (est. 5%)",      val:tco.storage_cost,    opt:tco_optimized.storage_cost, color:"bg-green-400",  icon:"💾"},
-                      ].map(r=>{
-                        const pctOfTotal = tco.total > 0 ? (r.val/tco.total*100) : 0;
-                        const saving_pct = r.val > 0 ? Math.round((1-r.opt/r.val)*100) : 0;
-                        return (
-                          <div key={r.label} className="space-y-1.5">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm">{r.icon}</span>
-                                <span className="text-xs text-slate-400">{r.label}</span>
-                              </div>
-                              <div className="text-right">
-                                <span className="text-sm font-bold text-white font-mono">${Math.round(r.val/1000)}k</span>
-                                {saving_pct > 0 && <span className="text-[9px] text-green-400 ml-1">→ ${Math.round(r.opt/1000)}k (−{saving_pct}%)</span>}
-                              </div>
-                            </div>
-                            <div className="h-1.5 bg-white/[0.05] rounded-full overflow-hidden">
-                              <div className={`h-full rounded-full ${r.color} transition-all`} style={{width:`${pctOfTotal}%`}}/>
-                            </div>
+                        )}
+                        {r.note && <div className="text-[9px] text-slate-600">{r.note}</div>}
+                        <div className="flex justify-between items-center bg-cyan-400/5 border border-cyan-400/10 rounded-lg px-2 py-1.5">
+                          <span className="text-[9px] text-cyan-400">+ {kernel.name.split(" ")[0]}</span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-cyan-400 font-mono">${effPrice.toFixed(2)}/hr</span>
+                            <span className="text-[8px] font-bold text-green-400 bg-green-400/10 px-1 py-0.5 rounded-full">−{saving}%</span>
                           </div>
-                        );
-                      })}
-                      <div className="flex justify-between py-2 border-t border-white/[0.08] mt-2">
-                        <span className="text-sm font-bold text-white">Total TCO</span>
-                        <div className="text-right">
-                          <span className="text-lg font-bold text-red-400 font-mono">${(tco.total/1e6).toFixed(2)}M</span>
-                          <div className="text-xs text-green-400">optimized: ${(tco_optimized.total/1e6).toFixed(2)}M</div>
                         </div>
                       </div>
                     </div>
-
-                    {/* Power & sustainability */}
-                    <div className="space-y-3">
-                      <div className="bg-amber-400/5 border border-amber-400/15 rounded-xl p-4 space-y-3">
-                        <div className="text-xs font-bold text-amber-400 mb-2">⚡ Power & Thermal Model</div>
-                        {[
-                          {label:"GPU TDP × count",    val:`${gpu.tdp}W × ${gpuCount} = ${(gpu.tdp*gpuCount/1000).toFixed(1)} kW`},
-                          {label:"Total with PUE",     val:`${tco.power_kw.toFixed(1)} kW`},
-                          {label:"Monthly kWh",        val:`${(tco.power_kw*24*30).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')} kWh`},
-                          {label:"CO₂ (avg grid)",     val:`${(tco.power_kw*24*30*0.41/1000).toFixed(1)} tonnes CO₂/mo`},
-                          {label:"Cooling (PUE overhead)", val:`${((pue-1)*gpu.tdp*gpuCount/1000).toFixed(1)} kW`},
-                        ].map(r=>(
-                          <div key={r.label} className="flex justify-between text-xs">
-                            <span className="text-slate-500">{r.label}</span>
-                            <span className="text-amber-400 font-mono font-bold">{r.val}</span>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="bg-white/[0.02] rounded-xl p-4 border border-white/[0.05] space-y-2">
-                        <div className="text-xs font-bold text-slate-400 mb-2">PUE benchmarks</div>
-                        {[
-                          {name:"Hyperscaler (Google/Meta)", pue_val:1.1, color:"text-green-400"},
-                          {name:"Modern colo (FluidStack tier)",pue_val:1.2,color:"text-cyan-400"},
-                          {name:"Standard colo",             pue_val:1.4, color:"text-amber-400"},
-                          {name:"Older facility",            pue_val:1.8, color:"text-red-400"},
-                        ].map(r=>(
-                          <div key={r.name} className="flex justify-between text-xs">
-                            <div className="flex items-center gap-1.5">
-                              <div className={cn("w-1.5 h-1.5 rounded-full", r.pue_val===pue?"ring-2 ring-white":"")} style={{background:r.color.replace("text-","").replace("-400","")}}/>
-                              <span className="text-slate-400">{r.name}</span>
-                            </div>
-                            <span className={`font-mono font-bold ${r.color}`}>PUE {r.pue_val}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </GlowCard>
-            </div>
-          </div>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════════
-            TAB 5: NPI INTELLIGENCE
-        ══════════════════════════════════════════════════════════════════ */}
-        {activeTab === "npi" && (
-          <div className="space-y-5">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {[
-                {
-                  phase:"EVT", title:"Engineering Validation Test", icon:"🔧",
-                  color:"text-amber-400", border:"border-amber-400/20", bg:"bg-amber-400/5",
-                  items:["GPU compute TFLOPS validation vs spec","HBM bandwidth stress test (DGEMM sweep)","NVLink topology verification (all-to-all BW)","Thermal TDP headroom at sustained load","PCIe Gen5 link training & error rate","MIG partition correctness + isolation"],
-                  gpu_metrics:["FP16 TFLOPS: target "+gpu.tflops_fp16+" TF","HBM BW: "+gpu.hbm_bw+" GB/s","NVLink BW: "+(gpu.nvlink_bw||"N/A")+" GB/s","TDP: "+gpu.tdp+"W sustained"],
-                },
-                {
-                  phase:"DVT", title:"Design Validation Test", icon:"⚗️",
-                  color:"text-cyan-400", border:"border-cyan-400/20", bg:"bg-cyan-400/5",
-                  items:["Multi-node NVLink/IB fabric validation","RDMA over IB for distributed training","Power delivery at 80% sustained utilization","Cooling CDU flow rate & delta-T","Firmware + driver stack compatibility","vLLM / TRT-LLM inference stack benchmarks"],
-                  gpu_metrics:["InfiniBand NDR: 400 Gb/s","All-reduce latency: <1ms for 1GB","Power efficiency: TFLOPS/W","Cooling: CDU 45°C supply temp"],
-                },
-                {
-                  phase:"PVT", title:"Production Validation Test", icon:"🚀",
-                  color:"text-green-400", border:"border-green-400/20", bg:"bg-green-400/5",
-                  items:["SLA latency P50/P95/P99 under load","Throughput: tokens/sec at target utilization","GPU utilization & MFU tracking","Failure rate & MTBF baseline","SkyPilot workload scheduling integration","Customer pilot: real LLM inference workloads"],
-                  gpu_metrics:["TTFT P99: <2s at batch="+batchSize,"TGS: "+capacity.tps_per_gpu+" tok/s/GPU","MFU target: >35%","Availability: 99.9%"],
-                },
-              ].map(phase=>(
-                <GlowCard key={phase.phase}>
-                  <div className="p-5">
-                    <div className={cn("inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold border mb-4", phase.border, phase.bg, phase.color)}>
-                      <span>{phase.icon}</span>{phase.phase}
-                    </div>
-                    <div className="text-sm font-bold text-white mb-3">{phase.title}</div>
-                    <ul className="space-y-1.5 mb-4">
-                      {phase.items.map(item=>(
-                        <li key={item} className="flex items-start gap-2 text-[11px] text-slate-400">
-                          <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5 text-slate-600"/>
-                          {item}
-                        </li>
-                      ))}
-                    </ul>
-                    <div className={cn("rounded-lg p-3 border text-[10px] space-y-1", phase.border, phase.bg)}>
-                      <div className={cn("font-bold mb-1", phase.color)}>Key metrics for {gpu.name}</div>
-                      {phase.gpu_metrics.map(m=><div key={m} className="text-slate-500">{m}</div>)}
-                    </div>
-                  </div>
-                </GlowCard>
-              ))}
+                  </GlowCard>
+                );
+              })}
             </div>
 
-            {/* Hardware spec comparison for NPI */}
+            {/* Provider comparison table */}
             <GlowCard>
               <div className="p-5">
-                <SectionHeader icon={<Cpu className="w-4 h-4"/>} title="Hardware NPI comparison matrix" sub="GPU-by-GPU technical spec for procurement & validation planning"/>
+                <SectionHdr icon={<ArrowUpDown className="w-4 h-4"/>} title="Provider comparison — H100 SXM5 spotlight" sub="All providers offering H100 SXM · March 2026 pricing"/>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-white/[0.07]">
-                        {["GPU","Arch","VRAM","HBM BW","FP16 TF","FP8 TF","NVLink BW","TDP","Ops:Byte","MIG"].map(h=>(
-                          <th key={h} className="text-left py-2 pr-4 text-[10px] text-slate-600 uppercase tracking-wide font-medium">{h}</th>
+                        {["Provider","Tier","On-demand","Spot","IB","Egress","Green","SLA","Focus"].map(h=>(
+                          <th key={h} className="text-left py-2 pr-4 text-[9px] text-slate-600 uppercase tracking-wide font-medium whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {GPU_SPECS.map(g=>(
-                        <tr key={g.id}
-                          className={cn("border-b border-white/[0.04] cursor-pointer transition-all",
-                            g.id===selGpuId?"bg-cyan-400/5":"hover:bg-white/[0.02]")}
-                          onClick={()=>setSelGpuId(g.id)}>
-                          <td className="py-2.5 pr-4 font-bold text-white">{g.name}</td>
-                          <td className="py-2.5 pr-4 text-slate-500">{g.arch}</td>
-                          <td className="py-2.5 pr-4 text-cyan-400 font-mono">{g.vram}GB {g.hbm}</td>
-                          <td className="py-2.5 pr-4 text-violet-400 font-mono">{g.hbm_bw} GB/s</td>
-                          <td className="py-2.5 pr-4 text-white font-mono">{g.tflops_fp16} TF</td>
-                          <td className="py-2.5 pr-4 text-green-400 font-mono">{g.tflops_fp8 ? g.tflops_fp8+" TF" : "—"}</td>
-                          <td className="py-2.5 pr-4 text-amber-400 font-mono">{g.nvlink_bw ? g.nvlink_bw+" GB/s" : "PCIe"}</td>
-                          <td className="py-2.5 pr-4 text-red-400 font-mono">{g.tdp}W</td>
-                          <td className="py-2.5 pr-4 text-slate-400 font-mono">{g.ops_per_byte}</td>
-                          <td className="py-2.5 pr-4 text-slate-400">{g.mig_instances ? `×${g.mig_instances}` : "—"}</td>
-                        </tr>
-                      ))}
+                      {PROVIDERS.map(p => {
+                        const h100 = p.gpus.find(g=>g.gpu==="h100-sxm");
+                        if (!h100) return null;
+                        const tierStyle = TIER_STYLE[p.tier];
+                        return (
+                          <tr key={p.id} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-all">
+                            <td className="py-2.5 pr-4">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded text-[8px] font-bold flex items-center justify-center flex-shrink-0"
+                                  style={{background:`${p.color}18`,color:p.color}}>{p.logo}</div>
+                                <span className="font-semibold text-white">{p.name}</span>
+                              </div>
+                            </td>
+                            <td className="py-2.5 pr-4"><Badge className={cn(tierStyle.bg,tierStyle.color,tierStyle.border)}>{tierStyle.label}</Badge></td>
+                            <td className="py-2.5 pr-4 font-bold text-white font-mono">${h100.od.toFixed(2)}</td>
+                            <td className="py-2.5 pr-4 font-bold font-mono">{h100.spot ? <span className="text-green-400">${h100.spot.toFixed(2)}</span> : <span className="text-slate-600">—</span>}</td>
+                            <td className="py-2.5 pr-4">{p.ib ? <span className="text-cyan-400">✓</span> : <span className="text-slate-600">✗</span>}</td>
+                            <td className="py-2.5 pr-4">{p.egress_free ? <span className="text-green-400">free</span> : <span className="text-slate-600">paid</span>}</td>
+                            <td className="py-2.5 pr-4">{p.green ? <span className="text-emerald-400">🌱</span> : <span className="text-slate-600">—</span>}</td>
+                            <td className="py-2.5 pr-4">{p.sla ? <span className="text-green-400">✓</span> : <span className="text-slate-600">—</span>}</td>
+                            <td className="py-2.5 pr-4 text-slate-400 text-[9px] max-w-[200px] truncate">{p.focus}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -984,9 +578,414 @@ export default function Page() {
           </div>
         )}
 
+        {/* ══ TAB: WORKLOAD ════════════════════════════════════════════════════ */}
+        {tab === "workload" && (
+          <div className="grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-5">
+            <div className="space-y-4">
+              <GlowCard>
+                <div className="p-5 space-y-3">
+                  <SectionHdr icon={<Cpu className="w-4 h-4"/>} title="Model" sub="Select LLM"/>
+                  {LLM_MODELS.map((m,i)=>(
+                    <button key={m.name} onClick={()=>setSelModel(i)}
+                      className={cn("w-full text-left px-3 py-2.5 rounded-xl border text-xs transition-all",
+                        i===selModel?"bg-cyan-400/8 border-cyan-400/30 text-white":"bg-white/[0.02] border-white/[0.05] text-slate-400 hover:border-white/[0.1]")}>
+                      <div className="font-bold">{m.name}</div>
+                      <div className="text-[9px] opacity-60">{m.params}B params · {m.layers} layers</div>
+                    </button>
+                  ))}
+                  <div className="space-y-3 pt-2 border-t border-white/[0.05]">
+                    {[
+                      {l:"Batch size",  v:batchSize, set:setBatchSize, min:1,   max:128,  step:1},
+                      {l:"Seq length",  v:seqLen,    set:setSeqLen,    min:512, max:32768,step:512},
+                    ].map(s=>(
+                      <div key={s.l}>
+                        <div className="flex justify-between text-xs mb-1"><span className="text-slate-500">{s.l}</span><span className="font-mono text-white">{s.v.toLocaleString()}</span></div>
+                        <input type="range" min={s.min} max={s.max} step={s.step} value={s.v} onChange={e=>s.set(Number(e.target.value))} className="w-full accent-cyan-400"/>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </GlowCard>
+            </div>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  {l:"Model weights",  v:`${wGb.toFixed(1)} GB`,       c:"text-cyan-400"},
+                  {l:"KV cache",       v:`${kvGb.toFixed(1)} GB`,       c:"text-violet-400"},
+                  {l:"Total VRAM",     v:`${totVram.toFixed(1)} GB`,    c:totVram>gpuSpec.vram?"text-red-400":"text-green-400"},
+                  {l:"Min GPUs",       v:String(minGpus),               c:"text-amber-400"},
+                ].map(s=>(
+                  <GlowCard key={s.l}><div className="p-4">
+                    <div className="text-[9px] text-slate-600 uppercase tracking-wide mb-1">{s.l}</div>
+                    <div className={`text-xl font-bold font-mono ${s.c}`}>{s.v}</div>
+                  </div></GlowCard>
+                ))}
+              </div>
+
+              <GlowCard>
+                <div className="p-5">
+                  <SectionHdr icon={<Activity className="w-4 h-4"/>} title="Roofline analysis" sub={`${model.name} · ${gpuSpec.name} · batch=${batchSize}`}/>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="space-y-2">
+                      {[
+                        {l:"GPU ops:byte ceiling", v:`${gpuSpec.ops_per_byte}`, u:"ops/B", c:"text-cyan-400"},
+                        {l:"Workload arithmetic intensity", v:arith.toFixed(1), u:"ops/B", c:arith<gpuSpec.ops_per_byte?"text-red-400":"text-green-400"},
+                        {l:"Bottleneck classification", v:bottleneck, u:"", c:bottleneck==="Compute"?"text-red-400":bottleneck==="Memory BW"?"text-violet-400":"text-amber-400"},
+                        {l:"Est. MFU (decode)", v:`~${Math.round(Math.min(arith/gpuSpec.ops_per_byte,1)*40+10)}%`, u:"", c:"text-green-400"},
+                        {l:"Est. MBU (decode)", v:`~${bottleneck==="Memory BW"?75:45}%`, u:"", c:"text-violet-400"},
+                      ].map(r=>(
+                        <div key={r.l} className="flex justify-between py-2 border-b border-white/[0.04]">
+                          <span className="text-xs text-slate-400">{r.l}</span>
+                          <span className={`text-sm font-bold font-mono ${r.c}`}>{r.v}<span className="text-slate-600 text-[9px] ml-0.5">{r.u}</span></span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className={cn("rounded-xl border p-4 text-[11px]", bottleneck==="Memory BW"?"bg-violet-400/5 border-violet-400/20":"bg-red-400/5 border-red-400/20")}>
+                      <div className={cn("font-bold mb-2", bottleneck==="Memory BW"?"text-violet-400":"text-red-400")}>
+                        {bottleneck==="Memory BW"?"⚠️ Memory-bandwidth bound":bottleneck==="Compute"?"✅ Compute bound":"🔄 Near ridge point"}
+                      </div>
+                      <p className="text-slate-400 leading-relaxed">
+                        {bottleneck==="Memory BW"
+                          ?`Arithmetic intensity (${arith.toFixed(1)} ops/B) < GPU ceiling (${gpuSpec.ops_per_byte} ops/B). Decode is BW-limited — every token loads all ${wGb.toFixed(0)} GB of weights. Fix: increase batch to ${Math.ceil(gpuSpec.ops_per_byte*model.params*model.bytes/(2*model.params*1e0))} or apply FlashAttention-3 to reduce HBM pressure.`
+                          :`Workload saturates Tensor Cores (${gpuSpec.tflops_fp16} TFLOPS). MFU is healthy. Consider FP8 kernels (${gpuSpec.tflops_fp8||"N/A"} TF FP8) for further gains.`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </GlowCard>
+
+              {/* 7-layer grid */}
+              <GlowCard>
+                <div className="p-5">
+                  <SectionHdr icon={<Layers className="w-4 h-4"/>} title="7-layer inference profile" sub="Phase-by-phase bottleneck classification"/>
+                  <div className="grid grid-cols-7 gap-1.5">
+                    {INF_LAYERS.map(l=>{
+                      const hot = l.bound==="Memory BW"||(l.bound==="Compute"&&bottleneck==="Compute");
+                      return (
+                        <div key={l.id} className={cn("rounded-xl p-2.5 border text-center",hot?"bg-red-400/8 border-red-400/20":"bg-white/[0.02] border-white/[0.05]")}>
+                          <div className="text-lg mb-1">{l.icon}</div>
+                          <div className="text-[9px] font-bold text-white">{l.name}</div>
+                          <Badge className={cn("mt-1 text-[7px]",BOUND_COLORS[l.bound])}>{l.bound}</Badge>
+                          {hot&&<div className="text-[7px] text-red-400 mt-1 font-bold">HOT</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {INF_LAYERS.map(l=>(
+                      <div key={l.id} className="flex items-start gap-2 text-[10px] text-slate-500">
+                        <span className="flex-shrink-0">{l.icon}</span>
+                        <span><strong className="text-slate-300">{l.id}. {l.name}</strong> — {l.desc}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </GlowCard>
+            </div>
+          </div>
+        )}
+
+        {/* ══ TAB: CAPACITY ════════════════════════════════════════════════════ */}
+        {tab === "capacity" && (
+          <div className="grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-5">
+            <GlowCard>
+              <div className="p-5 space-y-3">
+                <SectionHdr icon={<BarChart3 className="w-4 h-4"/>} title="Capacity inputs"/>
+                {[
+                  {l:"Target tok/s",  v:targetTps, set:setTargetTps, min:100,max:100000,step:100,fmt:(v:number)=>v.toLocaleString()},
+                  {l:"Batch size",    v:batchSize, set:setBatchSize, min:1,  max:256,   step:1,  fmt:(v:number)=>String(v)},
+                  {l:"Seq length",    v:seqLen,    set:setSeqLen,    min:512,max:32768, step:512,fmt:(v:number)=>v.toLocaleString()},
+                ].map(s=>(
+                  <div key={s.l}>
+                    <div className="flex justify-between text-xs mb-1"><span className="text-slate-500">{s.l}</span><span className="font-mono text-white">{s.fmt(s.v)}</span></div>
+                    <input type="range" min={s.min} max={s.max} step={s.step} value={s.v} onChange={e=>s.set(Number(e.target.value))} className="w-full accent-cyan-400"/>
+                  </div>
+                ))}
+                <div className="pt-2 border-t border-white/[0.05]">
+                  <div className="text-[10px] text-slate-600 mb-2 uppercase tracking-wide">Model</div>
+                  <select value={selModel} onChange={e=>setSelModel(Number(e.target.value))}
+                    className="w-full bg-white/[0.04] border border-white/[0.07] rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none">
+                    {LLM_MODELS.map((m,i)=><option key={m.name} value={i} className="bg-[#060d1a]">{m.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            </GlowCard>
+
+            <div className="space-y-4">
+              {(() => {
+                const tpsPerGpu = Math.round(batchSize / (model.params*model.bytes*1e9 / (gpuSpec.hbm_bw*1e9)));
+                const gpusNeeded = Math.max(Math.ceil(targetTps / (tpsPerGpu||1)), minGpus);
+                const nodes = Math.ceil(gpusNeeded/8);
+                const tp = Math.min(8,minGpus); const pp = Math.max(1,Math.ceil(minGpus/8));
+                const dp = Math.max(1,Math.ceil(gpusNeeded/Math.max(minGpus,1)));
+                return (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {[
+                        {l:"GPUs needed",  v:String(gpusNeeded),         c:"text-amber-400"},
+                        {l:"TPS per GPU",  v:tpsPerGpu.toLocaleString(), c:"text-cyan-400"},
+                        {l:"8-GPU nodes",  v:String(nodes),              c:"text-violet-400"},
+                        {l:"Min for model",v:`${minGpus} GPUs`,          c:"text-green-400"},
+                      ].map(s=>(
+                        <GlowCard key={s.l}><div className="p-4">
+                          <div className="text-[9px] text-slate-600 uppercase tracking-wide mb-1">{s.l}</div>
+                          <div className={`text-xl font-bold font-mono ${s.c}`}>{s.v}</div>
+                        </div></GlowCard>
+                      ))}
+                    </div>
+                    <GlowCard>
+                      <div className="p-5">
+                        <SectionHdr icon={<Server className="w-4 h-4"/>} title="Topology recommendation"/>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                          <div className="space-y-2">
+                            {[
+                              {l:"Tensor Parallelism",  v:`TP=${tp}`,  note:"Within 8-GPU node via NVLink. TP>8 → IB bottleneck.", c:"text-cyan-400"},
+                              {l:"Pipeline Parallelism",v:`PP=${pp}`,  note:"Across nodes via InfiniBand. For models >8 GPUs.", c:"text-violet-400"},
+                              {l:"Data Parallelism",    v:`DP=${dp}`,  note:"Replica count for throughput scaling.", c:"text-green-400"},
+                              {l:"Model replicas",      v:String(dp),  note:`${minGpus} GPUs/model × ${dp} replicas = ${gpusNeeded} total`, c:"text-amber-400"},
+                            ].map(r=>(
+                              <div key={r.l} className="py-2 border-b border-white/[0.04]">
+                                <div className="flex justify-between"><span className="text-xs text-slate-400">{r.l}</span><span className={`text-sm font-bold font-mono ${r.c}`}>{r.v}</span></div>
+                                <div className="text-[9px] text-slate-600 mt-0.5">{r.note}</div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="bg-white/[0.02] rounded-xl p-4 border border-white/[0.05]">
+                            <div className="text-xs font-bold text-slate-400 mb-3">Monthly cost at {gpusNeeded} GPUs — all providers</div>
+                            {PROVIDERS.filter(p=>p.gpus.some(g=>g.gpu==="h100-sxm")).map(p=>{
+                              const g = p.gpus.find(g=>g.gpu==="h100-sxm")!;
+                              const mo = gpusNeeded * g.od * 24 * 30;
+                              const sp = g.spot ? gpusNeeded * g.spot * 24 * 30 : null;
+                              const ts = TIER_STYLE[p.tier];
+                              return (
+                                <div key={p.id} className="flex items-center justify-between py-1.5 border-b border-white/[0.04]">
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-5 h-5 rounded text-[8px] font-bold flex items-center justify-center flex-shrink-0" style={{background:`${p.color}18`,color:p.color}}>{p.logo}</div>
+                                    <div>
+                                      <span className="text-xs text-slate-400">{p.name}</span>
+                                      <Badge className={cn("ml-1 text-[7px]",ts.bg,ts.color,ts.border)}>{ts.label}</Badge>
+                                    </div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-xs font-bold text-white font-mono">${Math.round(mo/1000)}k/mo</div>
+                                    {sp&&<div className="text-[9px] text-green-400">${Math.round(sp/1000)}k spot</div>}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </GlowCard>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* ══ TAB: TCO ═════════════════════════════════════════════════════════ */}
+        {tab === "tco" && (
+          <div className="grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-5">
+            <GlowCard>
+              <div className="p-5 space-y-3">
+                <SectionHdr icon={<DollarSign className="w-4 h-4"/>} title="TCO inputs"/>
+                {[
+                  {l:"GPU count",       v:gpuCount,  set:setGpuCount, min:8,   max:4096,step:8,   fmt:(v:number)=>String(v)},
+                  {l:"Months",          v:months,    set:setMonths,   min:1,   max:60,  step:1,   fmt:(v:number)=>String(v)},
+                  {l:"PUE",             v:pue,       set:setPue,      min:1.0, max:2.0, step:0.05,fmt:(v:number)=>v.toFixed(2)},
+                  {l:"GPU utilization", v:util,      set:setUtil,     min:10,  max:100, step:5,   fmt:(v:number)=>v+"%"},
+                ].map(s=>(
+                  <div key={s.l}>
+                    <div className="flex justify-between text-xs mb-1"><span className="text-slate-500">{s.l}</span><span className="font-mono text-white">{s.fmt(s.v)}</span></div>
+                    <input type="range" min={s.min} max={s.max} step={s.step} value={s.v} onChange={e=>s.set(Number(e.target.value))} className="w-full accent-cyan-400"/>
+                  </div>
+                ))}
+              </div>
+            </GlowCard>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  {l:"Total TCO",       v:`$${(tco.total/1e6).toFixed(2)}M`,     c:"text-red-400"},
+                  {l:"Power draw",      v:`${tco.power_kw.toFixed(0)} kW`,       c:"text-amber-400"},
+                  {l:"Optimized TCO",   v:`$${(tco.opt/1e6).toFixed(2)}M`,       c:"text-green-400"},
+                  {l:"Saving",          v:`${Math.round((1-tco.opt/tco.total)*100)}%`, c:"text-cyan-400"},
+                ].map(s=>(
+                  <GlowCard key={s.l}><div className="p-4">
+                    <div className="text-[9px] text-slate-600 uppercase tracking-wide mb-1">{s.l}</div>
+                    <div className={`text-xl font-bold font-mono ${s.c}`}>{s.v}</div>
+                  </div></GlowCard>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <GlowCard>
+                  <div className="p-5">
+                    <SectionHdr icon={<TrendingDown className="w-4 h-4"/>} title={`Cost breakdown · ${gpuCount} × ${gpuSpec.name}`}/>
+                    {[
+                      {l:"Compute (cloud)",    v:tco.compute, icon:"💻", c:"bg-cyan-400"},
+                      {l:`Power (PUE ${pue})`, v:tco.power,   icon:"⚡", c:"bg-amber-400"},
+                      {l:"Networking (8%)",    v:tco.net,     icon:"🌐", c:"bg-violet-400"},
+                      {l:"Storage (5%)",       v:tco.stor,    icon:"💾", c:"bg-green-400"},
+                    ].map(r=>{
+                      const pct = tco.total>0 ? r.v/tco.total*100 : 0;
+                      return (
+                        <div key={r.l} className="space-y-1 mb-3">
+                          <div className="flex justify-between">
+                            <span className="text-xs text-slate-400">{r.icon} {r.l}</span>
+                            <span className="text-xs font-bold text-white font-mono">${Math.round(r.v/1000)}k</span>
+                          </div>
+                          <div className="h-1.5 bg-white/[0.05] rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${r.c}`} style={{width:`${pct}%`}}/>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div className="flex justify-between py-2 border-t border-white/[0.08]">
+                      <span className="text-sm font-bold text-white">Total</span>
+                      <span className="text-lg font-bold text-red-400 font-mono">${(tco.total/1e6).toFixed(2)}M</span>
+                    </div>
+                  </div>
+                </GlowCard>
+
+                <GlowCard>
+                  <div className="p-5">
+                    <SectionHdr icon={<Power className="w-4 h-4"/>} title="Power & sustainability"/>
+                    <div className="space-y-2 mb-4">
+                      {[
+                        {l:`GPU TDP × ${gpuCount}`,  v:`${gpuSpec.tdp}W × ${gpuCount} = ${(gpuSpec.tdp*gpuCount/1000).toFixed(1)} kW`},
+                        {l:"With PUE overhead",       v:`${tco.power_kw.toFixed(1)} kW total`},
+                        {l:"Monthly kWh",             v:`${(tco.power_kw*24*30).toLocaleString(undefined,{maximumFractionDigits:0})} kWh`},
+                        {l:"CO₂ (avg grid 0.41kg/kWh)",v:`${(tco.power_kw*24*30*0.41/1000).toFixed(1)} t CO₂/mo`},
+                        {l:"Cooling overhead",        v:`${((pue-1)*gpuSpec.tdp*gpuCount/1000).toFixed(1)} kW`},
+                      ].map(r=>(
+                        <div key={r.l} className="flex justify-between text-xs py-1.5 border-b border-white/[0.04]">
+                          <span className="text-slate-500">{r.l}</span>
+                          <span className="text-amber-400 font-mono font-bold">{r.v}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="text-[10px] text-slate-600 mb-2">PUE benchmarks</div>
+                      {[
+                        {n:"Hyperscaler (Google/Meta)", p:1.1, c:"text-green-400"},
+                        {n:"Modern colo (FluidStack tier)", p:1.2, c:"text-cyan-400"},
+                        {n:"Standard colocation",     p:1.4, c:"text-amber-400"},
+                        {n:"Legacy facility",         p:1.8, c:"text-red-400"},
+                      ].map(r=>(
+                        <div key={r.n} className="flex justify-between text-xs">
+                          <span className="text-slate-500">{r.n}</span>
+                          <span className={`font-mono font-bold ${r.c} ${Math.abs(r.p-pue)<0.05?"ring-1 ring-white rounded px-1":""}`}>PUE {r.p}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Green providers callout */}
+                    <div className="mt-4 bg-emerald-400/5 border border-emerald-400/20 rounded-lg p-3">
+                      <div className="text-[10px] font-bold text-emerald-400 mb-1.5">🌱 Green providers for this workload</div>
+                      {PROVIDERS.filter(p=>p.green).map(p=>{
+                        const g=p.gpus.find(g=>g.gpu===selGpu);
+                        return g ? (
+                          <div key={p.id} className="flex justify-between text-[10px] py-0.5">
+                            <span className="text-slate-400">{p.name}</span>
+                            <span className="text-emerald-400 font-mono">${g.od.toFixed(2)}/hr · {p.focus.split(",")[0]}</span>
+                          </div>
+                        ) : null;
+                      })}
+                    </div>
+                  </div>
+                </GlowCard>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══ TAB: NPI ═════════════════════════════════════════════════════════ */}
+        {tab === "npi" && (
+          <div className="space-y-5">
+            <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-5">
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {[
+                    { phase:"EVT", title:"Engineering Validation", icon:"🔧", color:"text-amber-400", border:"border-amber-400/20", bg:"bg-amber-400/5",
+                      items:["FP16/FP8 TFLOPS vs NVIDIA spec sheet","HBM bandwidth DGEMM sweep","NVLink all-to-all bandwidth verify","TDP sustained under 100% load","PCIe Gen5 link training + error rate","MIG partition isolation & correctness"],
+                      metrics:[`TFLOPS: ${gpuSpec.tflops_fp16} FP16`,`HBM: ${gpuSpec.hbm_bw} GB/s`,`NVLink: ${gpuSpec.nvlink_bw||"PCIe"} GB/s`,`TDP: ${gpuSpec.tdp}W`] },
+                    { phase:"DVT", title:"Design Validation", icon:"⚗️", color:"text-cyan-400", border:"border-cyan-400/20", bg:"bg-cyan-400/5",
+                      items:["Multi-node NVLink/IB fabric validation","RDMA over IB distributed training","Power delivery at 80% sustained util","Cooling CDU delta-T measurement","Driver/firmware stack compatibility","vLLM + TRT-LLM inference benchmarks"],
+                      metrics:["IB NDR: 400 Gb/s","All-reduce <1ms for 1 GB","TFLOPS/W efficiency","CDU 45°C supply"] },
+                    { phase:"PVT", title:"Production Validation", icon:"🚀", color:"text-green-400", border:"border-green-400/20", bg:"bg-green-400/5",
+                      items:["SLA P50/P95/P99 latency under load","Tokens/sec at target utilization","GPU util + MFU tracking","MTBF baseline measurement","SkyPilot scheduling integration","Customer pilot: real LLM inference"],
+                      metrics:["TTFT P99: <2s","MFU target: >35%","Availability: 99.9%","Kernel savings applied"] },
+                  ].map(ph=>(
+                    <GlowCard key={ph.phase}>
+                      <div className="p-5">
+                        <div className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border mb-3",ph.border,ph.bg,ph.color)}>
+                          <span>{ph.icon}</span>{ph.phase}
+                        </div>
+                        <div className="text-sm font-bold text-white mb-3">{ph.title}</div>
+                        <ul className="space-y-1.5 mb-3">
+                          {ph.items.map(item=>(
+                            <li key={item} className="flex items-start gap-1.5 text-[10px] text-slate-400">
+                              <ChevronRight className="w-2.5 h-2.5 flex-shrink-0 mt-0.5 text-slate-600"/>{item}
+                            </li>
+                          ))}
+                        </ul>
+                        <div className={cn("rounded-lg p-3 border text-[9px] space-y-1",ph.border,ph.bg)}>
+                          <div className={cn("font-bold mb-1",ph.color)}>{gpuSpec.name} targets</div>
+                          {ph.metrics.map(m=><div key={m} className="text-slate-500">{m}</div>)}
+                        </div>
+                      </div>
+                    </GlowCard>
+                  ))}
+                </div>
+
+                {/* Hardware matrix */}
+                <GlowCard>
+                  <div className="p-5">
+                    <SectionHdr icon={<Cpu className="w-4 h-4"/>} title="Hardware spec matrix" sub="All GPU SKUs · NPI procurement reference"/>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-white/[0.07]">
+                            {["GPU","Arch","VRAM","HBM BW","FP16 TF","FP8 TF","NVLink","TDP","Ops:B"].map(h=>(
+                              <th key={h} className="text-left py-2 pr-3 text-[9px] text-slate-600 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(GPU_SPECS).map(([id,g])=>(
+                            <tr key={id} className={cn("border-b border-white/[0.04] cursor-pointer transition-all",selGpu===id?"bg-cyan-400/5":"hover:bg-white/[0.02]")}
+                              onClick={()=>setSelGpu(id)}>
+                              <td className="py-2 pr-3 font-bold text-white">{g.name}</td>
+                              <td className="py-2 pr-3 text-slate-500">{g.arch}</td>
+                              <td className="py-2 pr-3 text-cyan-400 font-mono">{g.vram}GB</td>
+                              <td className="py-2 pr-3 text-violet-400 font-mono">{g.hbm_bw}</td>
+                              <td className="py-2 pr-3 text-white font-mono">{g.tflops_fp16}</td>
+                              <td className="py-2 pr-3 text-green-400 font-mono">{g.tflops_fp8||"—"}</td>
+                              <td className="py-2 pr-3 text-amber-400 font-mono">{g.nvlink_bw?`${g.nvlink_bw} GB/s`:"PCIe"}</td>
+                              <td className="py-2 pr-3 text-red-400 font-mono">{g.tdp}W</td>
+                              <td className="py-2 pr-3 text-slate-400 font-mono">{g.ops_per_byte}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </GlowCard>
+              </div>
+
+              {/* Right: Live kernel feed */}
+              <div>
+                <KernelFeed selectedIdx={selKernel} onKernelSelect={(idx)=>setSelKernel(idx)} />
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* FOOTER */}
-        <footer className="border-t border-white/[0.05] pt-5 flex items-center justify-between flex-wrap gap-3 text-[11px] text-slate-600">
-          <div>Pricing & specs: NVIDIA docs, provider public APIs · March 2026 · Kernels: <a href="https://huggingface.co/datasets/GPUMODE/kernelbot-data" className="hover:text-slate-400 underline" target="_blank">GPUMODE/kernelbot-data</a></div>
+        <footer className="border-t border-white/[0.05] pt-5 flex items-center justify-between flex-wrap gap-3 text-[10px] text-slate-600">
+          <div>Pricing: IntuitionLabs H100 Report Mar 2026, Saturn Cloud Neocloud Guide Dec 2025, Northflank GPU comparison Aug 2025, provider pricing pages · Kernels: <a href="https://huggingface.co/datasets/GPUMODE/kernelbot-data" className="underline hover:text-slate-400" target="_blank">GPUMODE/kernelbot-data</a></div>
           <div className="flex gap-4">
             {[
               {h:"https://github.com/techstar9797/GPUMarketplace",l:"GitHub"},
@@ -994,9 +993,8 @@ export default function Page() {
               {h:"https://skypilot.co",l:"SkyPilot"},
               {h:"https://fluidstack.io",l:"FluidStack"},
             ].map(l=>(
-              <a key={l.h} href={l.h} target="_blank" rel="noopener noreferrer"
-                className="hover:text-slate-400 transition-colors flex items-center gap-1">
-                {l.l} <ExternalLink className="w-3 h-3"/>
+              <a key={l.h} href={l.h} target="_blank" rel="noopener noreferrer" className="hover:text-slate-400 flex items-center gap-1 transition-colors">
+                {l.l}<ExternalLink className="w-2.5 h-2.5"/>
               </a>
             ))}
           </div>
