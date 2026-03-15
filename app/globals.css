@@ -1,17 +1,18 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 :root {
-  --font-geist-sans: ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-geist-mono: ui-monospace, 'Cascadia Code', 'Source Code Pro', monospace;
+  --font-geist-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-geist-mono: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
 }
 
-html { color-scheme: dark; }
+html {
+  color-scheme: dark;
+}
 
 body {
   background: #030712;
   color: #f1f5f9;
   font-family: var(--font-geist-sans);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
